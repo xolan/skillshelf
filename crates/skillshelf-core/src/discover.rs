@@ -440,6 +440,11 @@ fn extract(archive: impl Read, folder: &str, dest: &Path) -> Result<Vec<String>>
         if rel.is_empty() {
             continue;
         }
+        ensure!(
+            rel.iter().all(|part| storable(part)),
+            "the skill has a file name Windows can't store: {}",
+            rel.join("/")
+        );
         let out = rel.iter().fold(dest.to_path_buf(), |p, part| p.join(part));
         match entry.header().entry_type() {
             tar::EntryType::Directory => fs::create_dir_all(&out)?,
@@ -469,6 +474,28 @@ fn extract(archive: impl Read, folder: &str, dest: &Path) -> Result<Vec<String>>
     );
     files.sort();
     Ok(files)
+}
+
+/// Whether Windows can store a file named `name` as it is; elsewhere every name is fine. Windows
+/// would fail on the others halfway through, or worse: `C:` or `name:stream` lead out of the
+/// folder or into a hidden stream, and a trailing dot or space is dropped, so `SKILL.md.` would
+/// overwrite `SKILL.md`.
+fn storable(name: &str) -> bool {
+    const DEVICES: &[&str] = &[
+        "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", "COM0", "COM1", "COM2", "COM3", "COM4",
+        "COM5", "COM6", "COM7", "COM8", "COM9", "COM¹", "COM²", "COM³", "LPT0", "LPT1", "LPT2",
+        "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9", "LPT¹", "LPT²", "LPT³",
+    ];
+    if !cfg!(windows) {
+        return true;
+    }
+    // Device names are taken with any extension too (`nul.txt`) on Windows 10.
+    let stem = name.split('.').next().unwrap_or(name).trim_end_matches(' ');
+    !name.ends_with(['.', ' '])
+        && !name.chars().any(|c| c < ' ' || r#"<>:"/\|?*"#.contains(c))
+        && !DEVICES
+            .iter()
+            .any(|device| stem.eq_ignore_ascii_case(device))
 }
 
 fn valid_name(name: &str) -> bool {
@@ -716,6 +743,36 @@ mod tests {
         let traversal = tarball(&[("repo-abc/s/../../evil", tar::EntryType::Regular, b"x")]);
         assert!(extract(&traversal[..], "s", dest.path()).is_err());
         assert!(!dest.path().parent().unwrap().join("evil").exists());
+    }
+
+    #[test]
+    fn refuses_names_windows_cannot_store_on_windows() {
+        for name in [
+            "C:/evil",
+            "SKILL.md:hidden",
+            "CON",
+            "nul.txt",
+            "a?b",
+            "trail.",
+            "trail ",
+        ] {
+            let dest = tempfile::tempdir().unwrap();
+            let archive = tarball(&[
+                ("repo-abc/s/SKILL.md", tar::EntryType::Regular, b"x"),
+                (&format!("repo-abc/s/{name}"), tar::EntryType::Regular, b"x"),
+            ]);
+            let result = extract(&archive[..], "s", dest.path());
+            assert_eq!(result.is_err(), cfg!(windows), "{name}");
+        }
+        // `C:evil` would be relative to the current directory on drive C.
+        assert!(!Path::new("C:evil").exists());
+        // Names elsewhere in the repository don't matter.
+        let dest = tempfile::tempdir().unwrap();
+        let archive = tarball(&[
+            ("repo-abc/s/SKILL.md", tar::EntryType::Regular, b"x"),
+            ("repo-abc/other/CON", tar::EntryType::Regular, b"x"),
+        ]);
+        assert!(extract(&archive[..], "s", dest.path()).is_ok());
     }
 
     #[test]
