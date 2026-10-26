@@ -215,7 +215,7 @@ pub fn install_skill(
         },
     ];
     if link_claude {
-        actions.push(Action::Symlink {
+        actions.push(Action::Link {
             link,
             target: claude_link_target(env, &target, &skill.name),
         });
@@ -722,11 +722,16 @@ mod tests {
         };
         let actions = install_skill(&env, &skill, &[Provider::Claude]).unwrap();
         assert_eq!(actions.len(), 4);
+        let target = if cfg!(windows) {
+            env.agents_skills().join("s")
+        } else {
+            "../../.agents/skills/s".into()
+        };
         assert_eq!(
             actions[2],
-            Action::Symlink {
+            Action::Link {
                 link: env.claude_skills().join("s"),
-                target: "../../.agents/skills/s".into()
+                target
             }
         );
         assert_eq!(
@@ -785,8 +790,7 @@ mod tests {
         )
         .unwrap();
         fs::create_dir_all(env.claude_skills()).unwrap();
-        std::os::unix::fs::symlink("../../.agents/skills/s", env.claude_skills().join("s"))
-            .unwrap();
+        crate::testing::link_dir("../../.agents/skills/s", env.claude_skills().join("s"));
         let dir = staging_root(&env).join("new");
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("SKILL.md"), "new").unwrap();
@@ -822,7 +826,7 @@ mod tests {
         let dotfiles = home.path().join("dotfiles/s");
         fs::create_dir_all(&dotfiles).unwrap();
         fs::create_dir_all(env.agents_skills()).unwrap();
-        std::os::unix::fs::symlink(&dotfiles, env.agents_skills().join("s")).unwrap();
+        crate::testing::link_dir(&dotfiles, env.agents_skills().join("s"));
         fs::write(env.skill_lock(), r#"{"skills":{"s":{}}}"#).unwrap();
         let fetched = FetchedSkill {
             name: "s".into(),

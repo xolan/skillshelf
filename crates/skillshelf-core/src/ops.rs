@@ -17,9 +17,10 @@ use crate::{AvailablePlugin, Env, Plugin, Provider, Skill, SkillInstall};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
-    /// Unlinks a symlink, or deletes a file or directory. Never follows links.
+    /// Unlinks a symlink or junction, or deletes a file or directory. Never follows links.
     Remove(PathBuf),
-    Symlink {
+    /// Links a folder: a symlink, or a junction on Windows.
+    Link {
         link: PathBuf,
         target: PathBuf,
     },
@@ -68,9 +69,7 @@ impl Action {
                 Ok(m) if m.is_symlink() => format!("Unlink {}", show(path)),
                 _ => format!("Delete {}", show(path)),
             },
-            Action::Symlink { link, target } => {
-                format!("Link {} → {}", show(link), target.display())
-            }
+            Action::Link { link, target } => format!("Link {} → {}", show(link), show(target)),
             Action::SetClaudeSkill { title, enabled } => format!(
                 "Turn {} skill \"{title}\" in {}",
                 on_off(enabled),
@@ -129,9 +128,9 @@ pub fn execute(env: &Env, actions: &[Action]) -> Result<()> {
 fn run(env: &Env, action: &Action) -> Result<()> {
     match action {
         Action::Remove(path) => remove(path),
-        Action::Symlink { link, target } => {
+        Action::Link { link, target } => {
             fs::create_dir_all(link.parent().context("link has no parent directory")?)?;
-            symlink(target, link)
+            link_dir(target, link)
         }
         Action::Rename { from, to } => {
             fs::create_dir_all(to.parent().context("target has no parent directory")?)?;
@@ -172,20 +171,40 @@ fn remove(path: &Path) -> Result<()> {
     // symlink_metadata never reports a link as a directory, so links are unlinked, not followed.
     if meta.is_dir() {
         fs::remove_dir_all(path)?;
+    } else if is_dir_link(&meta) {
+        // Windows unlinks a junction or directory symlink like an empty directory.
+        fs::remove_dir(path)?;
     } else {
         fs::remove_file(path)?;
     }
     Ok(())
 }
 
+#[cfg(windows)]
+fn is_dir_link(meta: &fs::Metadata) -> bool {
+    std::os::windows::fs::FileTypeExt::is_symlink_dir(&meta.file_type())
+}
+
+#[cfg(not(windows))]
+fn is_dir_link(_meta: &fs::Metadata) -> bool {
+    false
+}
+
 #[cfg(unix)]
-fn symlink(target: &Path, link: &Path) -> Result<()> {
+pub(crate) fn link_dir(target: &Path, link: &Path) -> Result<()> {
     Ok(std::os::unix::fs::symlink(target, link)?)
 }
 
-#[cfg(not(unix))]
-fn symlink(_target: &Path, _link: &Path) -> Result<()> {
-    anyhow::bail!("linking skills is only supported on Linux and macOS for now")
+/// A junction, as `npx skills` makes on Windows: unlike a directory symlink, it needs neither
+/// administrator rights nor Developer Mode. Its target must be absolute.
+#[cfg(windows)]
+pub(crate) fn link_dir(target: &Path, link: &Path) -> Result<()> {
+    anyhow::ensure!(
+        target.is_absolute(),
+        "a junction needs an absolute target, not {}",
+        target.display()
+    );
+    Ok(junction::create(target, link)?)
 }
 
 /// Rewrites a JSON file only when the edit changes it.
@@ -220,7 +239,7 @@ pub fn toggle_skill(env: &Env, skill: &Skill, provider: Provider, enabled: bool)
                 let Some(shared) = &skill.shared else {
                     return actions;
                 };
-                actions.push(Action::Symlink {
+                actions.push(Action::Link {
                     link: env.claude_skills().join(&skill.name),
                     target: claude_link_target(env, shared, &skill.name),
                 });
@@ -247,8 +266,12 @@ pub fn toggle_skill(env: &Env, skill: &Skill, provider: Provider, enabled: bool)
 }
 
 /// Relative like `npx skills` makes it, unless `$CLAUDE_CONFIG_DIR` moved Claude's directory.
+/// Windows junctions take absolute targets only, so there it is always the shared folder.
 pub(crate) fn claude_link_target(env: &Env, shared: &Path, name: &str) -> PathBuf {
-    if env.claude_dir == env.home.join(".claude") && shared == env.agents_skills().join(name) {
+    if cfg!(unix)
+        && env.claude_dir == env.home.join(".claude")
+        && shared == env.agents_skills().join(name)
+    {
         Path::new("../../.agents/skills").join(name)
     } else {
         shared.to_path_buf()
@@ -396,8 +419,8 @@ mod tests {
     use super::*;
     use crate::PluginInstall;
     use crate::scan_skills;
+    use crate::testing::link_dir;
     use std::collections::BTreeMap;
-    use std::os::unix::fs::symlink;
 
     fn write_skill(dir: &Path) {
         fs::create_dir_all(dir).unwrap();
@@ -410,13 +433,13 @@ mod tests {
         let env = Env::at(home.path());
         write_skill(&env.agents_skills().join("s"));
         fs::create_dir_all(env.claude_skills()).unwrap();
-        symlink("../../.agents/skills/s", env.claude_skills().join("s")).unwrap();
+        link_dir("../../.agents/skills/s", env.claude_skills().join("s"));
         write_skill(&env.codex_skills().join("s"));
         fs::create_dir_all(&env.codex_dir).unwrap();
         fs::write(
             env.codex_config(),
             format!(
-                "model = \"x\"\n\n[[skills.config]]\npath = \"{}\"\nenabled = false\n",
+                "model = \"x\"\n\n[[skills.config]]\npath = '{}'\nenabled = false\n",
                 env.agents_skills().join("s/SKILL.md").display()
             ),
         )
@@ -478,10 +501,28 @@ mod tests {
         let dotfiles = home.path().join("dotfiles/s");
         write_skill(&dotfiles);
         fs::create_dir_all(env.claude_skills()).unwrap();
-        symlink(&dotfiles, env.claude_skills().join("s")).unwrap();
+        link_dir(&dotfiles, env.claude_skills().join("s"));
         execute(&env, &uninstall_skill(&skill(&env), &Provider::ALL)).unwrap();
         assert!(dotfiles.join("SKILL.md").is_file());
         assert!(fs::symlink_metadata(env.claude_skills().join("s")).is_err());
+    }
+
+    #[test]
+    fn remove_unlinks_a_folder_link_and_keeps_its_target() {
+        let home = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        write_skill(outside.path());
+        let link = home.path().join("s");
+        link_dir(outside.path(), &link);
+        let env = Env::at(home.path());
+        assert!(
+            Action::Remove(link.clone())
+                .describe(&env)
+                .starts_with("Unlink")
+        );
+        execute(&env, &[Action::Remove(link.clone())]).unwrap();
+        assert!(fs::symlink_metadata(&link).is_err());
+        assert!(outside.path().join("SKILL.md").is_file());
     }
 
     #[test]
@@ -494,9 +535,14 @@ mod tests {
             &toggle_skill(&env, &skill(&env), Provider::Claude, true),
         )
         .unwrap();
+        let target = if cfg!(windows) {
+            env.agents_skills().join("s")
+        } else {
+            "../../.agents/skills/s".into()
+        };
         assert_eq!(
             fs::read_link(env.claude_skills().join("s")).unwrap(),
-            Path::new("../../.agents/skills/s")
+            target
         );
         assert_eq!(skill(&env).enabled(Provider::Claude), Some(true));
         // Nothing was turned off, so settings.json is not created.

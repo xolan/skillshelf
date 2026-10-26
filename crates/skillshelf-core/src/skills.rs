@@ -180,7 +180,7 @@ pub(crate) fn frontmatter(text: &str) -> Frontmatter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::symlink;
+    use crate::testing::link_dir;
 
     fn write_skill(dir: &Path, name: &str) {
         fs::create_dir_all(dir).unwrap();
@@ -218,19 +218,17 @@ mod tests {
         // Shared skill, linked into Claude the way `npx skills` does it.
         write_skill(&agents.join("shared"), "shared");
         fs::create_dir_all(env.claude_skills()).unwrap();
-        symlink(
+        link_dir(
             "../../.agents/skills/shared",
             env.claude_skills().join("shared"),
-        )
-        .unwrap();
+        );
         // Claude-only real directory, and a link to somewhere else (a dotfiles repo).
         write_skill(&env.claude_skills().join("local"), "local");
         write_skill(&home.path().join("dotfiles/foreign"), "foreign");
-        symlink(
+        link_dir(
             home.path().join("dotfiles/foreign"),
             env.claude_skills().join("foreign"),
-        )
-        .unwrap();
+        );
         // Codex's own dir: a skill only there, a second copy of a shared one, and Codex's
         // bundled skills, which are never listed.
         write_skill(&env.codex_skills().join("old"), "old");
@@ -241,7 +239,7 @@ mod tests {
         fs::write(
             env.codex_config(),
             format!(
-                "[[skills.config]]\npath = \"{}\"\nenabled = false\n",
+                "[[skills.config]]\npath = '{}'\nenabled = false\n",
                 agents.join("shared/SKILL.md").display()
             ),
         )
