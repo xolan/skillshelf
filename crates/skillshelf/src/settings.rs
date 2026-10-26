@@ -1,5 +1,6 @@
-//! Settings in `~/.config/skillshelf/`: `settings.json`, plus the GitHub token in a private file
-//! of its own, so `settings.json` can live in a dotfiles repository without leaking it.
+//! Settings in `~/.config/skillshelf/` (`%APPDATA%\skillshelf\` on Windows): `settings.json`,
+//! plus the GitHub token in a private file of its own, so `settings.json` can live in a dotfiles
+//! repository without leaking it.
 
 use std::fs;
 use std::io::{ErrorKind, Write};
@@ -10,12 +11,17 @@ use serde_json::{Value, json};
 use skillshelf_core::{Env, gh_token};
 
 pub fn config_dir() -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME")
+    #[cfg(windows)]
+    let base = std::env::var_os("APPDATA")
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
-        .or_else(|| std::env::home_dir().map(|h| h.join(".config")))
-        .unwrap_or_default()
-        .join("skillshelf")
+        .or_else(|| std::env::home_dir().map(|h| h.join("AppData").join("Roaming")));
+    #[cfg(not(windows))]
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::home_dir().map(|h| h.join(".config")));
+    base.unwrap_or_default().join("skillshelf")
 }
 
 fn settings_path() -> PathBuf {
@@ -109,7 +115,8 @@ pub fn read_token() -> Option<String> {
     (!token.is_empty()).then(|| token.to_owned())
 }
 
-/// Saves the token readable by the owner only.
+/// Saves the token readable by the owner only. On Windows the file inherits the permissions of
+/// `%APPDATA%`, which only the user (and administrators) can read.
 pub fn save_token(token: &str) -> Result<()> {
     let token = token.trim();
     ensure!(!token.is_empty(), "the token is empty");
@@ -146,11 +153,20 @@ pub fn delete_token() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::write_private;
+    #[cfg(windows)]
+    #[test]
+    fn settings_live_in_appdata() {
+        let appdata = std::env::var_os("APPDATA").unwrap();
+        assert_eq!(
+            super::config_dir(),
+            std::path::Path::new(&appdata).join("skillshelf")
+        );
+    }
 
     #[cfg(unix)]
     #[test]
     fn private_file_is_owner_only() {
+        use super::write_private;
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("token");
