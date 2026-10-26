@@ -1,4 +1,5 @@
 mod assets;
+mod settings;
 mod shelf;
 mod theme;
 

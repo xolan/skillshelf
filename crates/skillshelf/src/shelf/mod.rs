@@ -4,13 +4,14 @@ mod change;
 mod discover;
 mod installed;
 mod palette;
+mod preferences;
 
 use std::collections::HashMap;
 use std::time::Duration;
 
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::{
-    ActiveTheme, Disableable, Icon, IconName, Sizable, StyledExt, TitleBar, WindowExt,
+    ActiveTheme, Disableable, Icon, IconName, Selectable, Sizable, StyledExt, TitleBar, WindowExt,
     button::{Button, ButtonVariants},
     command::CommandState,
     h_flex,
@@ -18,7 +19,7 @@ use gpui_kit::component::{
     menu::{DropdownMenu, PopupMenuItem},
     notification::Notification,
     scroll::ScrollableElement,
-    sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem},
+    sidebar::{Sidebar, SidebarFooter, SidebarGroup, SidebarMenu, SidebarMenuItem},
     spinner::Spinner,
     switch::Switch,
     v_flex,
@@ -30,6 +31,7 @@ use skillshelf_core::{
     clean_staging, execute, scan_plugins, scan_skills,
 };
 
+use crate::settings::{self, GitHubAccess};
 use crate::theme;
 
 actions!(
@@ -65,6 +67,7 @@ enum Page {
     Plugins,
     FindSkills,
     FindPlugins,
+    Settings,
 }
 
 impl Page {
@@ -74,6 +77,7 @@ impl Page {
             Page::Plugins => "Filter plugins",
             Page::FindSkills => "Search skills.sh",
             Page::FindPlugins => "Filter marketplace plugins",
+            Page::Settings => "",
         }
     }
 }
@@ -122,6 +126,13 @@ pub struct Shelf {
     palette: Entity<CommandState>,
     /// Scrolls the selected row into view when the keyboard moves the selection.
     list_scroll: ScrollHandle,
+    github_access: GitHubAccess,
+    /// Where a personal access token is typed; cleared once saved.
+    token_input: Entity<InputState>,
+    has_token: bool,
+    /// The result of the last GitHub access check, e.g. the hourly request limit.
+    access_status: Option<Result<SharedString, SharedString>>,
+    access_task: Option<Task<()>>,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -130,6 +141,11 @@ impl Shelf {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let filter =
             cx.new(|cx| InputState::new(window, cx).placeholder(Page::Skills.placeholder()));
+        let token_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .masked(true)
+                .placeholder("github_pat_…")
+        });
         let subscription = cx.subscribe(&filter, |this, _, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
                 this.list_scroll.set_offset(Point::default());
@@ -166,6 +182,11 @@ impl Shelf {
             update_task: None,
             palette: cx.new(|cx| CommandState::new(window, cx)),
             list_scroll: ScrollHandle::new(),
+            github_access: GitHubAccess::load(),
+            token_input,
+            has_token: settings::read_token().is_some(),
+            access_status: None,
+            access_task: None,
             focus: cx.focus_handle(),
             _subscriptions: vec![subscription],
         };
@@ -279,6 +300,9 @@ impl Shelf {
         if page == Page::FindPlugins && self.offers.is_none() {
             self.load_offers(cx);
         }
+        if page == Page::Settings {
+            self.check_access(cx);
+        }
         if page == Page::FindSkills {
             self.hits.clear();
             self.search_error = None;
@@ -355,6 +379,7 @@ impl Shelf {
                 .take(discover::MAX_OFFERS)
                 .map(|o| Selection::Offer(o.id.clone()))
                 .collect(),
+            Page::Settings => Vec::new(),
         }
     }
 
@@ -483,6 +508,23 @@ impl Shelf {
                     item(Page::FindPlugins, "Plugins", Icon::new(Lucide::Store), None),
                 ])),
             )
+            .footer(
+                SidebarFooter::new()
+                    .selected(self.page == Page::Settings)
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .text_sm()
+                            .child(IconName::Settings)
+                            .child("Settings"),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, window, cx| {
+                            this.open_page(Page::Settings, window, cx)
+                        }),
+                    ),
+            )
     }
 
     fn render_page(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -491,6 +533,7 @@ impl Shelf {
             Page::Plugins => self.render_plugins(cx),
             Page::FindSkills => self.render_find_skills(cx),
             Page::FindPlugins => self.render_find_plugins(cx),
+            Page::Settings => self.render_settings(cx),
         }
     }
 

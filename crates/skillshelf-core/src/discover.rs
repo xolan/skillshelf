@@ -86,13 +86,20 @@ impl FetchedSkill {
     }
 }
 
-/// Downloads `skill_id` from the GitHub repository `source` into a staging directory.
-pub fn fetch_skill(env: &Env, source: &str, skill_id: &str) -> Result<FetchedSkill> {
-    let commit = head_commit(source)?;
+/// Downloads `skill_id` from the GitHub repository `source` into a staging directory. `token`
+/// raises GitHub's API rate limit from 60 to 5,000 requests an hour.
+pub fn fetch_skill(
+    env: &Env,
+    source: &str,
+    skill_id: &str,
+    token: Option<&str>,
+) -> Result<FetchedSkill> {
+    let commit = head_commit(source, token)?;
     let tree: Tree = serde_json::from_str(
-        &github(&format!(
-            "https://api.github.com/repos/{source}/git/trees/{commit}?recursive=1"
-        ))
+        &github(
+            token,
+            &format!("https://api.github.com/repos/{source}/git/trees/{commit}?recursive=1"),
+        )
         .call()?
         .body_mut()
         .with_config()
@@ -102,7 +109,7 @@ pub fn fetch_skill(env: &Env, source: &str, skill_id: &str) -> Result<FetchedSki
     .context("unexpected GitHub tree response")?;
     let folder = find_skill_folder(&tree, skill_id, |path| {
         let url = format!("https://raw.githubusercontent.com/{source}/{commit}/{path}");
-        Ok(github(&url).call()?.body_mut().read_to_string()?)
+        Ok(github(token, &url).call()?.body_mut().read_to_string()?)
     })?;
     let folder_hash = if folder.is_empty() {
         tree.sha.clone()
@@ -128,9 +135,10 @@ fn download(
 ) -> Result<FetchedSkill> {
     let dir = staging_root(env).join(unique());
     fs::create_dir_all(&dir)?;
-    let archive = github(&format!(
-        "https://codeload.github.com/{source}/tar.gz/{commit}"
-    ))
+    let archive = github(
+        None,
+        &format!("https://codeload.github.com/{source}/tar.gz/{commit}"),
+    )
     .call()
     .context("could not download the repository")?
     .into_body()
@@ -236,12 +244,16 @@ pub struct SkillUpdate {
 
 /// Compares the folder hash the lock file recorded at install with the folder on GitHub now.
 /// `None` when they match, or the skill was not installed from GitHub.
-pub fn check_skill_update(env: &Env, name: &str) -> Result<Option<SkillUpdate>> {
+pub fn check_skill_update(
+    env: &Env,
+    name: &str,
+    token: Option<&str>,
+) -> Result<Option<SkillUpdate>> {
     let Some((source, folder, installed)) = locked_skill(&read_json(&env.skill_lock())?, name)
     else {
         return Ok(None);
     };
-    let folder_hash = tree_hash(&source, "HEAD", &folder)?;
+    let folder_hash = tree_hash(&source, "HEAD", &folder, token)?;
     Ok((folder_hash != installed).then(|| SkillUpdate {
         name: name.to_owned(),
         source,
@@ -266,9 +278,9 @@ fn locked_skill(lock: &Value, name: &str) -> Option<(String, String, String)> {
 }
 
 /// Downloads the newer version of an installed skill into a staging directory.
-pub fn fetch_update(env: &Env, update: &SkillUpdate) -> Result<FetchedSkill> {
-    let commit = head_commit(&update.source)?;
-    let folder_hash = tree_hash(&update.source, &commit, &update.folder)?;
+pub fn fetch_update(env: &Env, update: &SkillUpdate, token: Option<&str>) -> Result<FetchedSkill> {
+    let commit = head_commit(&update.source, token)?;
+    let folder_hash = tree_hash(&update.source, &commit, &update.folder, token)?;
     download(
         env,
         &update.source,
@@ -466,11 +478,12 @@ fn check_source(source: &str) -> Result<()> {
 }
 
 /// The commit `HEAD` of a GitHub repository points to.
-fn head_commit(source: &str) -> Result<String> {
+fn head_commit(source: &str, token: Option<&str>) -> Result<String> {
     check_source(source)?;
-    let commit = github(&format!(
-        "https://api.github.com/repos/{source}/commits/HEAD"
-    ))
+    let commit = github(
+        token,
+        &format!("https://api.github.com/repos/{source}/commits/HEAD"),
+    )
     .header("Accept", "application/vnd.github.sha")
     .call()
     .with_context(|| format!("could not reach github.com/{source}"))?
@@ -486,7 +499,7 @@ fn head_commit(source: &str) -> Result<String> {
 }
 
 /// Git tree hash of `folder` (`""` for the root) at `rev`, one small API call.
-fn tree_hash(source: &str, rev: &str, folder: &str) -> Result<String> {
+fn tree_hash(source: &str, rev: &str, folder: &str, token: Option<&str>) -> Result<String> {
     #[derive(Deserialize)]
     struct Tree {
         sha: String,
@@ -504,9 +517,10 @@ fn tree_hash(source: &str, rev: &str, folder: &str) -> Result<String> {
     } else {
         format!("{rev}:{folder}")
     };
-    let tree: Tree = github(&format!(
-        "https://api.github.com/repos/{source}/git/trees/{rev}"
-    ))
+    let tree: Tree = github(
+        token,
+        &format!("https://api.github.com/repos/{source}/git/trees/{rev}"),
+    )
     .call()
     .with_context(|| format!("could not read {folder} in github.com/{source}"))?
     .body_mut()
@@ -515,14 +529,54 @@ fn tree_hash(source: &str, rev: &str, folder: &str) -> Result<String> {
     Ok(tree.sha)
 }
 
-fn github(url: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
+fn github(token: Option<&str>, url: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
     let request = ureq::get(url).header("User-Agent", USER_AGENT);
-    match std::env::var("GITHUB_TOKEN").or_else(|_| std::env::var("GH_TOKEN")) {
-        Ok(token) if url.starts_with("https://api.github.com/") => {
+    // Only the API needs the token; never send it anywhere else.
+    match token {
+        Some(token) if url.starts_with("https://api.github.com/") => {
             request.header("Authorization", format!("Bearer {token}"))
         }
         _ => request,
     }
+}
+
+/// The token the GitHub CLI is signed in with (`gh auth token`).
+pub fn gh_token(env: &Env) -> Result<String> {
+    let token = env.run("gh", &["auth".into(), "token".into()])?;
+    let token = token.trim();
+    ensure!(!token.is_empty(), "gh is not signed in");
+    Ok(token.to_owned())
+}
+
+/// GitHub's core API rate limit for `token` (or for anonymous use): `(limit, remaining)` per hour.
+/// Checking it does not count against the limit.
+pub fn github_rate_limit(token: Option<&str>) -> Result<(u64, u64)> {
+    #[derive(Deserialize)]
+    struct Core {
+        limit: u64,
+        remaining: u64,
+    }
+    #[derive(Deserialize)]
+    struct Resources {
+        core: Core,
+    }
+    #[derive(Deserialize)]
+    struct Response {
+        resources: Resources,
+    }
+    let response: Response = match github(token, "https://api.github.com/rate_limit").call() {
+        Err(ureq::Error::StatusCode(401)) => {
+            bail!("GitHub rejected the token: it is invalid or has expired")
+        }
+        result => result.context("could not reach GitHub")?,
+    }
+    .body_mut()
+    .read_json()
+    .context("unexpected GitHub response")?;
+    Ok((
+        response.resources.core.limit,
+        response.resources.core.remaining,
+    ))
 }
 
 fn unique() -> String {
@@ -794,10 +848,12 @@ mod tests {
             r#"{"skills":{"find-skills":{"source":"vercel-labs/skills","sourceType":"github","skillPath":"skills/find-skills/SKILL.md","skillFolderHash":"0000"}}}"#,
         )
         .unwrap();
-        let update = check_skill_update(&env, "find-skills").unwrap().unwrap();
+        let update = check_skill_update(&env, "find-skills", None)
+            .unwrap()
+            .unwrap();
         assert_eq!(update.folder, "skills/find-skills");
         assert_eq!(update.folder_hash.len(), 40);
-        let fetched = fetch_update(&env, &update).unwrap();
+        let fetched = fetch_update(&env, &update, None).unwrap();
         assert_eq!(fetched.folder_hash, update.folder_hash);
         assert!(fetched.files.contains(&"SKILL.md".to_owned()));
     }
@@ -813,7 +869,7 @@ mod tests {
             .expect("skills.sh lists vercel-labs/skills find-skills");
         let home = tempfile::tempdir().unwrap();
         let env = Env::at(home.path());
-        let fetched = fetch_skill(&env, &hit.source, &hit.skill_id).unwrap();
+        let fetched = fetch_skill(&env, &hit.source, &hit.skill_id, None).unwrap();
         assert_eq!(fetched.name, "find-skills");
         assert_eq!(fetched.folder_hash.len(), 40);
         assert!(fetched.files.contains(&"SKILL.md".to_owned()));
@@ -823,5 +879,13 @@ mod tests {
         assert_eq!(skills[0].source.as_deref(), Some("vercel-labs/skills"));
         assert_eq!(skills[0].enabled(Provider::Claude), Some(true));
         assert_eq!(skills[0].enabled(Provider::Codex), Some(true));
+    }
+
+    #[test]
+    #[ignore = "uses the network"]
+    fn anonymous_rate_limit() {
+        let (limit, remaining) = github_rate_limit(None).unwrap();
+        assert_eq!(limit, 60);
+        assert!(remaining <= limit);
     }
 }

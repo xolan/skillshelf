@@ -9,6 +9,8 @@ use gpui_kit::component::{Theme, ThemeMode, ThemeRegistry};
 use gpui_kit::*;
 use serde_json::json;
 
+use crate::settings;
+
 pub const DARK: &str = "skillshelf Dark";
 pub const LIGHT: &str = "skillshelf Light";
 
@@ -49,10 +51,7 @@ pub fn init(window: &Window, cx: &mut App) {
         }
     }
 
-    let saved = fs::read_to_string(settings_path())
-        .ok()
-        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-        .and_then(|settings| settings["theme"].as_str().map(str::to_owned));
+    let saved = settings::get("theme");
     let system = match window.appearance() {
         WindowAppearance::Dark | WindowAppearance::VibrantDark => DARK,
         WindowAppearance::Light | WindowAppearance::VibrantLight => LIGHT,
@@ -77,7 +76,7 @@ pub fn names(cx: &App) -> Vec<(SharedString, ThemeMode)> {
 /// Applies a theme and remembers it for the next start.
 pub fn select(name: &str, cx: &mut App) {
     if apply(name, cx)
-        && let Err(e) = save(name)
+        && let Err(e) = settings::set("theme", name)
     {
         eprintln!("skillshelf: could not save the theme: {e:#}");
     }
@@ -91,33 +90,8 @@ fn apply(name: &str, cx: &mut App) -> bool {
     true
 }
 
-fn config_dir() -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| std::env::home_dir().map(|h| h.join(".config")))
-        .unwrap_or_default()
-        .join("skillshelf")
-}
-
-fn settings_path() -> PathBuf {
-    config_dir().join("settings.json")
-}
-
-fn save(theme: &str) -> Result<()> {
-    let path = settings_path();
-    let mut settings = fs::read_to_string(&path)
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_else(|| json!({}));
-    settings["theme"] = theme.into();
-    fs::create_dir_all(config_dir())?;
-    fs::write(&path, serde_json::to_string_pretty(&settings)? + "\n")?;
-    Ok(())
-}
-
 fn user_base16() -> Vec<(PathBuf, Result<String>)> {
-    let Ok(entries) = fs::read_dir(config_dir().join("themes")) else {
+    let Ok(entries) = fs::read_dir(settings::config_dir().join("themes")) else {
         return Vec::new();
     };
     entries

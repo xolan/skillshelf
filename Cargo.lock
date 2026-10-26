@@ -5879,6 +5879,7 @@ dependencies = [
  "serde_json",
  "serde_yaml_ng",
  "skillshelf-core",
+ "tempfile",
 ]
 
 [[package]]

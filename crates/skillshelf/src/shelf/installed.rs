@@ -12,6 +12,7 @@ use skillshelf_core::{
 
 use super::change::{Change, open_change_dialog};
 use super::{SEARCH_DELAY, Selection, Shelf, divider, fact, list_body, matches, warning};
+use crate::settings::GitHubAccess;
 
 impl Shelf {
     pub(super) fn skill(&self, name: &str) -> Option<&Skill> {
@@ -57,8 +58,11 @@ impl Shelf {
             cx.background_executor().timer(SEARCH_DELAY).await;
             let result = {
                 let name = name.clone();
-                cx.background_spawn(async move { check_skill_update(&env, &name) })
-                    .await
+                cx.background_spawn(async move {
+                    let token = GitHubAccess::load().token(&env).ok().flatten();
+                    check_skill_update(&env, &name, token.as_deref())
+                })
+                .await
             };
             this.update(cx, |this, cx| {
                 let result = result.map_err(|e| format!("{e:#}").into());
@@ -87,7 +91,10 @@ impl Shelf {
         let selection = Selection::Skill(name.clone());
         self.fetch_task = Some(cx.spawn_in(window, async move |this, cx| {
             let result = cx
-                .background_spawn(async move { fetch_update(&env, &update) })
+                .background_spawn(async move {
+                    let token = GitHubAccess::load().token(&env).ok().flatten();
+                    fetch_update(&env, &update, token.as_deref())
+                })
                 .await;
             this.update_in(cx, |this, window, cx| {
                 if this.selected.as_ref() != Some(&selection) {
