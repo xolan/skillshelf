@@ -49,6 +49,7 @@ impl Shelf {
                         Icon::new(Lucide::Store),
                         Page::FindPlugins,
                     ),
+                    page("Settings", IconName::Settings.into(), Page::Settings),
                 ],
             ),
             (

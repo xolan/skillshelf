@@ -15,6 +15,7 @@ use super::change::{Change, open_change_dialog};
 use super::{
     SEARCH_DELAY, Selection, Shelf, cell, divider, empty_state, fact, list_body, matches, warning,
 };
+use crate::settings::GitHubAccess;
 
 /// Most marketplace plugins to list at once; the filter narrows the rest.
 pub(super) const MAX_OFFERS: usize = 200;
@@ -65,7 +66,11 @@ impl Shelf {
             // Waits like the search does, so arrowing through results downloads only where it stops.
             cx.background_executor().timer(SEARCH_DELAY).await;
             let result = cx
-                .background_spawn(async move { fetch_skill(&env, &hit.source, &hit.skill_id) })
+                .background_spawn(async move {
+                    // Without a usable token the download still works, within the anonymous limit.
+                    let token = GitHubAccess::load().token(&env).ok().flatten();
+                    fetch_skill(&env, &hit.source, &hit.skill_id, token.as_deref())
+                })
                 .await;
             this.update(cx, |this, cx| {
                 if this.selected.as_ref() != Some(&selection) {

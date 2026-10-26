@@ -60,3 +60,7 @@ License (`OFL-Geist.txt` in the release tarball).
 ## Releases
 
 Pushing to `main` with a new `version` in `Cargo.toml` builds Linux binaries and publishes a GitHub release `v<version>`.
+
+## License
+
+[MIT](LICENSE). The bundled Base16 schemes are from [tinted-theming/schemes](https://github.com/tinted-theming/schemes) (MIT).

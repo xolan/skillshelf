@@ -9,7 +9,7 @@ mod skills;
 
 pub use discover::{
     FetchedSkill, SkillHit, SkillUpdate, check_skill_update, clean_staging, fetch_skill,
-    fetch_update, install_skill, search_skills, update_skill,
+    fetch_update, gh_token, github_rate_limit, install_skill, search_skills, update_skill,
 };
 pub use env::Env;
 pub use ops::{

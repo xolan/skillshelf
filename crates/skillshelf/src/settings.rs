@@ -1,0 +1,164 @@
+//! Settings in `~/.config/skillshelf/`: `settings.json`, plus the GitHub token in a private file
+//! of its own, so `settings.json` can live in a dotfiles repository without leaking it.
+
+use std::fs;
+use std::io::{ErrorKind, Write};
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result, ensure};
+use serde_json::{Value, json};
+use skillshelf_core::{Env, gh_token};
+
+pub fn config_dir() -> PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::home_dir().map(|h| h.join(".config")))
+        .unwrap_or_default()
+        .join("skillshelf")
+}
+
+fn settings_path() -> PathBuf {
+    config_dir().join("settings.json")
+}
+
+fn token_path() -> PathBuf {
+    config_dir().join("github-token")
+}
+
+fn load() -> Value {
+    fs::read_to_string(settings_path())
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_else(|| json!({}))
+}
+
+pub fn get(key: &str) -> Option<String> {
+    load()[key].as_str().map(str::to_owned)
+}
+
+pub fn set(key: &str, value: &str) -> Result<()> {
+    let mut settings = load();
+    settings[key] = value.into();
+    fs::create_dir_all(config_dir())?;
+    fs::write(
+        settings_path(),
+        serde_json::to_string_pretty(&settings)? + "\n",
+    )?;
+    Ok(())
+}
+
+/// Where GitHub downloads get a token from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GitHubAccess {
+    GhCli,
+    Token,
+    Anonymous,
+}
+
+impl GitHubAccess {
+    /// In display order; the token form sits under the last one.
+    pub const ALL: [GitHubAccess; 3] = [
+        GitHubAccess::GhCli,
+        GitHubAccess::Anonymous,
+        GitHubAccess::Token,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GitHubAccess::GhCli => "GitHub CLI (gh)",
+            GitHubAccess::Token => "Personal access token",
+            GitHubAccess::Anonymous => "No token",
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            GitHubAccess::GhCli => "gh",
+            GitHubAccess::Token => "token",
+            GitHubAccess::Anonymous => "none",
+        }
+    }
+
+    /// The saved choice; the GitHub CLI when nothing is saved.
+    pub fn load() -> GitHubAccess {
+        let saved = get("github");
+        GitHubAccess::ALL
+            .into_iter()
+            .find(|a| Some(a.key()) == saved.as_deref())
+            .unwrap_or(GitHubAccess::GhCli)
+    }
+
+    pub fn save(self) -> Result<()> {
+        set("github", self.key())
+    }
+
+    /// The token to send, if any. Runs `gh` for the CLI choice, so call it off the UI thread.
+    pub fn token(self, env: &Env) -> Result<Option<String>> {
+        match self {
+            GitHubAccess::GhCli => gh_token(env).map(Some),
+            GitHubAccess::Token => read_token().map(Some).context("no token is saved"),
+            GitHubAccess::Anonymous => Ok(None),
+        }
+    }
+}
+
+pub fn read_token() -> Option<String> {
+    let token = fs::read_to_string(token_path()).ok()?;
+    let token = token.trim();
+    (!token.is_empty()).then(|| token.to_owned())
+}
+
+/// Saves the token readable by the owner only.
+pub fn save_token(token: &str) -> Result<()> {
+    let token = token.trim();
+    ensure!(!token.is_empty(), "the token is empty");
+    ensure!(
+        token.chars().all(|c| c.is_ascii_graphic()),
+        "the token has characters GitHub tokens never contain"
+    );
+    fs::create_dir_all(config_dir())?;
+    write_private(&token_path(), token.as_bytes()).context("could not save the token")
+}
+
+fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        options.mode(0o600);
+        // An existing file keeps its old mode on open; tighten it before writing the secret.
+        if path.exists() {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        }
+    }
+    options.open(path)?.write_all(bytes)?;
+    Ok(())
+}
+
+pub fn delete_token() -> Result<()> {
+    match fs::remove_file(token_path()) {
+        Err(e) if e.kind() != ErrorKind::NotFound => Err(e.into()),
+        _ => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::write_private;
+
+    #[cfg(unix)]
+    #[test]
+    fn private_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("token");
+        std::fs::write(&path, "old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write_private(&path, b"new").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+}
