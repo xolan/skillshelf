@@ -1,9 +1,13 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
+
+/// Windows `CREATE_NO_WINDOW`: a console program started from a GUI app runs without opening a
+/// console window of its own.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Where providers keep their files, and how to run their command-line tools.
 #[derive(Clone, Debug)]
@@ -13,8 +17,8 @@ pub struct Env {
     pub claude_dir: PathBuf,
     /// `~/.codex`, or `$CODEX_HOME`.
     pub codex_dir: PathBuf,
-    /// `PATH` for provider tools: this process's `PATH`, then any extra entries from the user's
-    /// login shell, because an app started from a desktop launcher gets a short `PATH`.
+    /// `PATH` for provider tools: this process's `PATH`, then on Unix any extra entries from the
+    /// user's login shell, because an app started from a desktop launcher gets a short `PATH`.
     pub path: Option<OsString>,
 }
 
@@ -83,7 +87,7 @@ impl Env {
 
     /// Runs a provider tool and returns its stdout.
     pub fn run(&self, program: &str, args: &[String]) -> Result<String> {
-        let mut command = Command::new(program);
+        let mut command = Command::new(self.find(program));
         // Run from home: a project's tool config (e.g. a mise.toml pinning another codex) must
         // not leak into global changes.
         command
@@ -93,6 +97,9 @@ impl Env {
         if let Some(path) = &self.path {
             command.env("PATH", path);
         }
+        // Provider tools are console programs; each would flash a console window over the app.
+        #[cfg(windows)]
+        std::os::windows::process::CommandExt::creation_flags(&mut command, CREATE_NO_WINDOW);
         let output = command
             .output()
             .with_context(|| format!("could not run `{program}`"))?;
@@ -105,6 +112,37 @@ impl Env {
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
+
+    /// The file to start for `program`. On Windows, `Command` only looks for `<program>.exe`,
+    /// but npm installs `claude.cmd` and `codex.cmd`, so look on `PATH` the way a shell does.
+    fn find(&self, program: &str) -> PathBuf {
+        #[cfg(windows)]
+        {
+            let path = self.path.clone().or_else(|| std::env::var_os("PATH"));
+            if let Some(found) = path.and_then(|path| find_on_path(program, &path)) {
+                return found;
+            }
+        }
+        PathBuf::from(program)
+    }
+}
+
+/// The first `<dir>\<program><ext>` on `path`, trying the extensions in `PATHEXT` that
+/// `CreateProcess` can start: programs and batch files, not scripts such as `.ps1` or `.js`.
+#[cfg(windows)]
+fn find_on_path(program: &str, path: &std::ffi::OsStr) -> Option<PathBuf> {
+    let pathext = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
+    let extensions: Vec<String> = pathext
+        .split(';')
+        .map(str::to_ascii_lowercase)
+        .filter(|ext| [".com", ".exe", ".bat", ".cmd"].contains(&ext.as_str()))
+        .collect();
+    std::env::split_paths(path).find_map(|dir| {
+        extensions
+            .iter()
+            .map(|ext| dir.join(format!("{program}{ext}")))
+            .find(|file| file.is_file())
+    })
 }
 
 /// `first`, then the entries of `extra` that `first` lacks.
@@ -119,7 +157,9 @@ fn merge_paths(first: Option<OsString>, extra: Option<OsString>) -> Option<OsStr
 }
 
 /// `PATH` as the user's login shell sets it, or `None` if the shell fails or takes over 5 s.
+#[cfg(unix)]
 fn login_shell_path() -> Option<OsString> {
+    use std::time::{Duration, Instant};
     let shell = std::env::var_os("SHELL")?;
     let mut child = Command::new(shell)
         .args(["-l", "-i", "-c", "env"])
@@ -142,6 +182,12 @@ fn login_shell_path() -> Option<OsString> {
         .lines()
         .find_map(|line| line.strip_prefix("PATH="))
         .map(OsString::from)
+}
+
+/// Windows apps get the user's full `PATH` from the registry however they are started.
+#[cfg(not(unix))]
+fn login_shell_path() -> Option<OsString> {
+    None
 }
 
 #[cfg(test)]
@@ -171,9 +217,27 @@ mod tests {
 
     #[test]
     fn merge_paths_keeps_own_order_first() {
-        let merged = merge_paths(Some("/a:/b".into()), Some("/c:/a:/d".into()));
-        assert_eq!(merged, Some("/a:/b:/c:/d".into()));
-        assert_eq!(merge_paths(None, Some("/c".into())), Some("/c".into()));
+        let paths = |dirs: &[&str]| std::env::join_paths(dirs).ok();
+        let merged = merge_paths(paths(&["/a", "/b"]), paths(&["/c", "/a", "/d"]));
+        assert_eq!(merged, paths(&["/a", "/b", "/c", "/d"]));
+        assert_eq!(merge_paths(None, paths(&["/c"])), paths(&["/c"]));
         assert_eq!(merge_paths(None, None), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn runs_batch_file_tools_found_on_path() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("tool.cmd"), "@echo ran %*\r\n").unwrap();
+        std::fs::write(dir.path().join("script.ps1"), "").unwrap();
+        let mut env = Env::at(dir.path());
+        env.path = Some(dir.path().into());
+        let args = ["plugin".to_owned(), "name@market".to_owned()];
+        assert_eq!(
+            env.run("tool", &args).unwrap().trim(),
+            "ran plugin name@market"
+        );
+        // PowerShell scripts are not programs CreateProcess can start.
+        assert!(env.run("script", &[]).is_err());
     }
 }
