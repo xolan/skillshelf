@@ -165,6 +165,8 @@ pub(crate) struct Frontmatter {
 /// `name` and `description` from a SKILL.md. Falls back to a line scan, because many skills
 /// ship frontmatter that is not valid YAML (e.g. unquoted colons in the description).
 pub(crate) fn frontmatter(text: &str) -> Frontmatter {
+    // Windows PowerShell 5.1 and some Windows editors start UTF-8 files with a byte order mark.
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let Some(rest) = text.strip_prefix("---") else {
         return Frontmatter::default();
     };
@@ -215,6 +217,21 @@ mod tests {
             }
         );
         assert_eq!(frontmatter("no frontmatter"), Frontmatter::default());
+    }
+
+    #[test]
+    fn frontmatter_after_a_byte_order_mark_and_crlf() {
+        let expected = Frontmatter {
+            name: Some("a".into()),
+            description: Some("Does a: well.".into()),
+        };
+        for text in [
+            "\u{feff}---\nname: a\ndescription: \"Does a: well.\"\n---\n",
+            "---\r\nname: a\r\ndescription: \"Does a: well.\"\r\n---\r\nbody\r\n",
+            "\u{feff}---\r\nname: a\r\ndescription: Does a: well.\r\n---\r\n",
+        ] {
+            assert_eq!(frontmatter(text), expected, "{text:?}");
+        }
     }
 
     #[test]
