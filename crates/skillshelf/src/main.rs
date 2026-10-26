@@ -1,3 +1,6 @@
+// Release builds are GUI programs on Windows, so starting one opens no console window.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod assets;
 mod settings;
 mod shelf;

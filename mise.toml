@@ -38,6 +38,10 @@ run = "python3 -I scripts/licenses.py"
 description = "Fail if THIRD_PARTY_LICENSES.md is out of date"
 run = "python3 -I scripts/licenses.py --check"
 
+[tasks.icon]
+description = "Render assets/brand/skillshelf.ico (the Windows app icon) from skillshelf.svg"
+run = "cargo run -q -p skillshelf --example icon"
+
 [tasks.inventory]
 description = "Print the installed skills and plugins (read-only)"
 run = "cargo run -q -p skillshelf-core --example inventory"

@@ -5885,7 +5885,9 @@ name = "skillshelf"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "embed-resource",
  "gpui-kit",
+ "resvg 0.46.0",
  "serde_json",
  "serde_yaml_ng",
  "skillshelf-core",
