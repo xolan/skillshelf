@@ -11,7 +11,7 @@ A desktop app for managing agent skills and plugins for Claude Code and Codex CL
 - Pick the agents it manages in Settings; it leaves the others alone. None are on until you turn
   them on.
 
-Runs on Linux and Windows. See [PLAN.md](PLAN.md).
+Runs on Linux and Windows.
 
 ## Install
 
