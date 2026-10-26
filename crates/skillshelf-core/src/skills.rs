@@ -29,7 +29,8 @@ pub struct SkillInstall {
     pub provider: Provider,
     /// The directory or symlink the provider reads.
     pub path: PathBuf,
-    /// The provider reads the shared copy, directly or through a symlink.
+    /// The provider reads the shared copy, directly or through a link, or reads a copy of it
+    /// that `npx skills` made where it could not link.
     pub shared: bool,
     pub enabled: bool,
 }
@@ -61,6 +62,11 @@ pub fn scan_skills(env: &Env) -> Result<Vec<Skill>> {
     let codex_off = codex_disabled_skills(&read_toml(&env.codex_config())?);
     let codex_enabled =
         |dir: &Path| !codex_off.contains(&dir.join("SKILL.md").to_string_lossy().into_owned());
+    // A folder of a locked skill's name in ~/.claude/skills is the copy `npx skills` makes where
+    // it can't link, so it is as managed as a link.
+    let managed_copy = |name: &str, path: &Path| {
+        lock["skills"].get(name).is_some() && fs::symlink_metadata(path).is_ok_and(|m| m.is_dir())
+    };
 
     let mut skills: BTreeMap<String, Skill> = BTreeMap::new();
 
@@ -87,7 +93,7 @@ pub fn scan_skills(env: &Env) -> Result<Vec<Skill>> {
         let shared = skill
             .shared
             .as_deref()
-            .is_some_and(|dir| same_dir(&path, dir));
+            .is_some_and(|dir| same_dir(&path, dir) || managed_copy(&name, &path));
         let enabled = !claude_off.contains(&skill.title);
         skill.installs.push(SkillInstall {
             provider: Provider::Claude,
@@ -285,5 +291,28 @@ mod tests {
         assert!(get("foreign").shared.is_none());
         assert_eq!(get("old").enabled(Provider::Claude), None);
         assert_eq!(get("old").enabled(Provider::Codex), Some(true));
+    }
+
+    #[test]
+    fn scan_counts_a_copy_of_a_locked_skill_as_shared() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::at(home.path());
+        // `npx skills` copies where it can't link; only "locked" is in the lock file.
+        for name in ["locked", "unlocked"] {
+            write_skill(&env.agents_skills().join(name), name);
+            write_skill(&env.claude_skills().join(name), name);
+        }
+        fs::write(env.skill_lock(), r#"{"version":3,"skills":{"locked":{}}}"#).unwrap();
+        let skills = scan_skills(&env).unwrap();
+        let claude_shared = |n: &str| {
+            let skill = skills.iter().find(|s| s.name == n).unwrap();
+            let claude = skill
+                .installs
+                .iter()
+                .find(|i| i.provider == Provider::Claude);
+            claude.unwrap().shared
+        };
+        assert!(claude_shared("locked"));
+        assert!(!claude_shared("unlocked"));
     }
 }

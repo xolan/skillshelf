@@ -19,10 +19,16 @@ use crate::{AvailablePlugin, Env, Plugin, Provider, Skill, SkillInstall};
 pub enum Action {
     /// Unlinks a symlink or junction, or deletes a file or directory. Never follows links.
     Remove(PathBuf),
-    /// Links a folder: a symlink, or a junction on Windows.
+    /// Links a folder: a symlink, or a junction on Windows, where it falls back to a copy when
+    /// the junction can't be made (as `npx skills` does).
     Link {
         link: PathBuf,
         target: PathBuf,
+    },
+    /// Copies a folder that holds no links.
+    Copy {
+        from: PathBuf,
+        to: PathBuf,
     },
     Rename {
         from: PathBuf,
@@ -70,6 +76,7 @@ impl Action {
                 _ => format!("Delete {}", show(path)),
             },
             Action::Link { link, target } => format!("Link {} → {}", show(link), show(target)),
+            Action::Copy { from, to } => format!("Copy {} to {}", show(from), show(to)),
             Action::SetClaudeSkill { title, enabled } => format!(
                 "Turn {} skill \"{title}\" in {}",
                 on_off(enabled),
@@ -130,7 +137,11 @@ fn run(env: &Env, action: &Action) -> Result<()> {
         Action::Remove(path) => remove(path),
         Action::Link { link, target } => {
             fs::create_dir_all(link.parent().context("link has no parent directory")?)?;
-            link_dir(target, link)
+            link_dir(target, link).or_else(|e| copy_instead(target, link, e))
+        }
+        Action::Copy { from, to } => {
+            fs::create_dir_all(to.parent().context("target has no parent directory")?)?;
+            copy_dir(from, to)
         }
         Action::Rename { from, to } => {
             fs::create_dir_all(to.parent().context("target has no parent directory")?)?;
@@ -176,6 +187,45 @@ fn remove(path: &Path) -> Result<()> {
         fs::remove_dir(path)?;
     } else {
         fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
+/// On Windows, a volume that can't hold a junction (FAT, exFAT, some network shares) gets a copy
+/// instead, as `npx skills` does. A link that already exists is an error, not a reason to copy.
+#[cfg(windows)]
+fn copy_instead(target: &Path, link: &Path, error: anyhow::Error) -> Result<()> {
+    if error
+        .downcast_ref::<std::io::Error>()
+        .is_some_and(|e| e.kind() == ErrorKind::AlreadyExists)
+    {
+        return Err(error);
+    }
+    // The failed junction leaves its empty folder behind.
+    let _ = fs::remove_dir(link);
+    copy_dir(target, link)
+}
+
+#[cfg(not(windows))]
+fn copy_instead(_target: &Path, _link: &Path, error: anyhow::Error) -> Result<()> {
+    Err(error)
+}
+
+/// Copies the folder `from` to `to`, which must not exist yet. Refuses links inside `from`, so a
+/// copy never reaches outside the skill.
+fn copy_dir(from: &Path, to: &Path) -> Result<()> {
+    fs::create_dir(to).with_context(|| format!("could not create {}", to.display()))?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        let to = to.join(entry.file_name());
+        if kind.is_dir() {
+            copy_dir(&entry.path(), &to)?;
+        } else if kind.is_file() {
+            fs::copy(entry.path(), &to)?;
+        } else {
+            anyhow::bail!("{} is a link; refusing to copy it", entry.path().display());
+        }
     }
     Ok(())
 }
@@ -505,6 +555,50 @@ mod tests {
         execute(&env, &uninstall_skill(&skill(&env), &Provider::ALL)).unwrap();
         assert!(dotfiles.join("SKILL.md").is_file());
         assert!(fs::symlink_metadata(env.claude_skills().join("s")).is_err());
+    }
+
+    #[test]
+    fn uninstall_from_codex_keeps_the_folder_a_claude_copy_belongs_to() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::at(home.path());
+        write_skill(&env.agents_skills().join("s"));
+        write_skill(&env.claude_skills().join("s"));
+        fs::write(
+            env.skill_lock(),
+            r#"{"version":3,"skills":{"s":{"source":"o/r"}}}"#,
+        )
+        .unwrap();
+        let actions = uninstall_skill(&skill(&env), &[Provider::Codex]);
+        assert_eq!(
+            actions,
+            [Action::SetCodexSkill {
+                skill_md: env.agents_skills().join("s").join("SKILL.md"),
+                enabled: false
+            }]
+        );
+        // Uninstalling it everywhere removes the copy too.
+        execute(&env, &uninstall_skill(&skill(&env), &Provider::ALL)).unwrap();
+        assert!(!env.claude_skills().join("s").exists());
+        assert!(!env.agents_skills().join("s").exists());
+    }
+
+    #[test]
+    fn copy_takes_files_and_refuses_links() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::at(home.path());
+        let from = home.path().join("from");
+        write_skill(&from.join("nested"));
+        let to = home.path().join("deep/to");
+        let copy = Action::Copy {
+            from: from.clone(),
+            to: to.clone(),
+        };
+        execute(&env, std::slice::from_ref(&copy)).unwrap();
+        assert!(to.join("nested/SKILL.md").is_file());
+
+        link_dir(home.path().join("deep"), from.join("link"));
+        fs::remove_dir_all(&to).unwrap();
+        assert!(execute(&env, &[copy]).is_err());
     }
 
     #[test]

@@ -309,21 +309,32 @@ pub fn update_skill(env: &Env, name: &str, skill: &FetchedSkill) -> Result<Vec<A
         .to_string()
         .into();
     let old = staging_root(env).join(format!("{}-old", unique()));
-    Ok(vec![
+    let mut actions = vec![
         Action::Rename {
             from: target.clone(),
             to: old.clone(),
         },
         Action::Rename {
             from: skill.dir.clone(),
-            to: target,
+            to: target.clone(),
         },
         Action::AddLock {
             name: name.to_owned(),
             entry,
         },
-        Action::Remove(old),
-    ])
+    ];
+    // A copy in ~/.claude/skills, made where `npx skills` could not link, would keep the old
+    // version.
+    let claude_copy = env.claude_skills().join(name);
+    if fs::symlink_metadata(&claude_copy).is_ok_and(|m| m.is_dir()) {
+        actions.push(Action::Remove(claude_copy.clone()));
+        actions.push(Action::Copy {
+            from: target,
+            to: claude_copy,
+        });
+    }
+    actions.push(Action::Remove(old));
+    Ok(actions)
 }
 
 /// Downloads wait here: next to `~/.agents/skills`, so installing is a rename, but outside it,
@@ -817,6 +828,39 @@ mod tests {
         assert_eq!(entry["skillFolderHash"], "new");
         assert_eq!(entry["installedAt"], "then");
         assert_ne!(entry["updatedAt"], Value::Null);
+    }
+
+    #[test]
+    fn update_refreshes_a_copy_in_claude() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::at(home.path());
+        for dir in [env.agents_skills().join("s"), env.claude_skills().join("s")] {
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("SKILL.md"), "old").unwrap();
+        }
+        fs::write(
+            env.skill_lock(),
+            r#"{"skills":{"s":{"skillPath":"SKILL.md"}}}"#,
+        )
+        .unwrap();
+        let dir = staging_root(&env).join("new");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("SKILL.md"), "new").unwrap();
+        let fetched = FetchedSkill {
+            name: "s".into(),
+            source: "o/r".into(),
+            dir,
+            skill_path: "SKILL.md".into(),
+            folder_hash: "new".into(),
+            skill_md: "new".into(),
+            files: vec!["SKILL.md".into()],
+        };
+        crate::execute(&env, &update_skill(&env, "s", &fetched).unwrap()).unwrap();
+        assert_eq!(
+            fs::read_to_string(env.claude_skills().join("s/SKILL.md")).unwrap(),
+            "new"
+        );
+        assert_eq!(fs::read_dir(staging_root(&env)).unwrap().count(), 0);
     }
 
     #[test]
