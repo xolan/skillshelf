@@ -16,6 +16,7 @@ toml_edit = "0.25"
 ureq = { version = "3", features = ["json"] }
 
 [target.'cfg(windows)'.dependencies]
+dunce = "1"
 junction = "1"
 
 [dev-dependencies]

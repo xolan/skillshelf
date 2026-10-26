@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use serde::Deserialize;
 
-use crate::config::{claude_disabled_skills, codex_disabled_skills, read_json, read_toml};
+use crate::config::{
+    claude_disabled_skills, codex_disabled_skills, codex_skill_key, read_json, read_toml,
+};
 use crate::{Env, Provider};
 
 #[derive(Clone, Debug)]
@@ -60,8 +62,7 @@ pub fn scan_skills(env: &Env) -> Result<Vec<Skill>> {
     let lock = read_json(&env.skill_lock())?;
     let claude_off = claude_disabled_skills(&read_json(&env.claude_settings())?);
     let codex_off = codex_disabled_skills(&read_toml(&env.codex_config())?);
-    let codex_enabled =
-        |dir: &Path| !codex_off.contains(&dir.join("SKILL.md").to_string_lossy().into_owned());
+    let codex_enabled = |dir: &Path| !codex_off.contains(&codex_skill_key(&dir.join("SKILL.md")));
     // A folder of a locked skill's name in ~/.claude/skills is the copy `npx skills` makes where
     // it can't link, so it is as managed as a link.
     let managed_copy = |name: &str, path: &Path| {

@@ -151,7 +151,7 @@ fn run(env: &Env, action: &Action) -> Result<()> {
             set_claude_skill(s, title, *enabled)
         }),
         Action::SetCodexSkill { skill_md, enabled } => edit_toml(&env.codex_config(), |doc| {
-            set_codex_skill(doc, &skill_md.to_string_lossy(), *enabled)
+            set_codex_skill(doc, skill_md, *enabled)
         }),
         Action::SetCodexPlugin { id, enabled } => edit_toml(&env.codex_config(), |doc| {
             set_codex_plugin(doc, id, *enabled)

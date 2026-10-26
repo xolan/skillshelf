@@ -96,7 +96,7 @@ pub(crate) fn set_claude_skill(settings: &mut Value, name: &str, enabled: bool) 
     Ok(())
 }
 
-/// `SKILL.md` paths turned off in Codex's `[[skills.config]]`.
+/// `SKILL.md` paths turned off in Codex's `[[skills.config]]`, as [`codex_skill_key`]s.
 pub(crate) fn codex_disabled_skills(doc: &DocumentMut) -> HashSet<String> {
     doc.get("skills")
         .and_then(|s| s.get("config"))
@@ -104,11 +104,43 @@ pub(crate) fn codex_disabled_skills(doc: &DocumentMut) -> HashSet<String> {
         .into_iter()
         .flatten()
         .filter(|t| t.get("enabled").and_then(Item::as_bool) == Some(false))
-        .filter_map(|t| t.get("path").and_then(Item::as_str).map(str::to_owned))
+        .filter_map(|t| t.get("path").and_then(Item::as_str))
+        .map(|path| codex_skill_key(Path::new(path)))
         .collect()
 }
 
-pub(crate) fn set_codex_skill(doc: &mut DocumentMut, skill_md: &str, enabled: bool) -> Result<()> {
+/// What Codex compares `[[skills.config]]` paths by: both sides canonicalized, and on Windows
+/// without regard to separators or ASCII case. So an entry still matches when another tool
+/// spelled the path differently.
+pub(crate) fn codex_skill_key(path: &Path) -> String {
+    let key = canonical(path).to_string_lossy().into_owned();
+    if cfg!(windows) {
+        key.replace('/', "\\").to_ascii_lowercase()
+    } else {
+        key
+    }
+}
+
+/// The path Codex writes for a skill: on Windows canonical, as `dunce` makes it (backslashes, the
+/// real case, links resolved, no `\\?\`). Elsewhere the path as given.
+fn codex_skill_path(skill_md: &Path) -> String {
+    if cfg!(windows) {
+        canonical(skill_md).to_string_lossy().into_owned()
+    } else {
+        skill_md.to_string_lossy().into_owned()
+    }
+}
+
+/// `path` with links resolved, or as given when it does not exist.
+fn canonical(path: &Path) -> std::path::PathBuf {
+    #[cfg(windows)]
+    let resolved = dunce::canonicalize(path).unwrap_or_else(|_| dunce::simplified(path).into());
+    #[cfg(not(windows))]
+    let resolved = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    resolved
+}
+
+pub(crate) fn set_codex_skill(doc: &mut DocumentMut, skill_md: &Path, enabled: bool) -> Result<()> {
     let skills = doc
         .entry("skills")
         .or_insert_with(implicit_table)
@@ -119,10 +151,15 @@ pub(crate) fn set_codex_skill(doc: &mut DocumentMut, skill_md: &str, enabled: bo
         .or_insert(Item::ArrayOfTables(ArrayOfTables::new()))
         .as_array_of_tables_mut()
         .context("`skills.config` in config.toml is not an array of tables")?;
-    configs.retain(|t| t.get("path").and_then(Item::as_str) != Some(skill_md));
+    let key = codex_skill_key(skill_md);
+    configs.retain(|t| {
+        t.get("path")
+            .and_then(Item::as_str)
+            .is_none_or(|path| codex_skill_key(Path::new(path)) != key)
+    });
     if !enabled {
         let mut entry = Table::new();
-        entry["path"] = value(skill_md);
+        entry["path"] = value(codex_skill_path(skill_md));
         entry["enabled"] = value(false);
         configs.push(entry);
     }
@@ -200,12 +237,59 @@ mod tests {
     #[test]
     fn codex_skill_toggle_keeps_other_config() {
         let original = "# mine\nmodel = \"x\"\n\n[tui]\nfoo = 1\n";
+        let skill_md = Path::new("/h/.agents/skills/a/SKILL.md");
         let mut doc: DocumentMut = original.parse().unwrap();
-        set_codex_skill(&mut doc, "/h/.agents/skills/a/SKILL.md", false).unwrap();
-        assert!(codex_disabled_skills(&doc).contains("/h/.agents/skills/a/SKILL.md"));
+        set_codex_skill(&mut doc, skill_md, false).unwrap();
+        assert!(codex_disabled_skills(&doc).contains(&codex_skill_key(skill_md)));
         assert!(doc.to_string().contains("[[skills.config]]"));
-        set_codex_skill(&mut doc, "/h/.agents/skills/a/SKILL.md", true).unwrap();
+        set_codex_skill(&mut doc, skill_md, true).unwrap();
         assert_eq!(doc.to_string(), original);
+    }
+
+    #[test]
+    fn codex_skill_entries_match_like_codex_matches_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let skill_md = dir.path().join("a").join("SKILL.md");
+        fs::create_dir_all(dir.path().join("a")).unwrap();
+        fs::write(&skill_md, "").unwrap();
+        crate::testing::link_dir("a", dir.path().join("alias"));
+        let mut spellings = vec![
+            dir.path()
+                .join("alias")
+                .join("SKILL.md")
+                .display()
+                .to_string(),
+        ];
+        if cfg!(windows) {
+            let plain = skill_md.display().to_string();
+            spellings.push(plain.replace('\\', "/"));
+            spellings.push(plain.to_lowercase());
+        }
+        for spelling in spellings {
+            let entry = format!("[[skills.config]]\npath = '{spelling}'\nenabled = false\n");
+            let mut doc: DocumentMut = entry.parse().unwrap();
+            assert!(
+                codex_disabled_skills(&doc).contains(&codex_skill_key(&skill_md)),
+                "{spelling}"
+            );
+            set_codex_skill(&mut doc, &skill_md, true).unwrap();
+            assert_eq!(doc.to_string(), "", "{spelling}");
+        }
+
+        // Windows gets the spelling Codex itself writes: canonical, with backslashes.
+        let mut doc = DocumentMut::new();
+        let mixed = dir.path().join("alias/SKILL.md");
+        set_codex_skill(&mut doc, &mixed, false).unwrap();
+        let written = doc["skills"]["config"][0]["path"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        if cfg!(windows) {
+            let real = fs::canonicalize(&skill_md).unwrap().display().to_string();
+            assert_eq!(Some(written.as_str()), real.strip_prefix(r"\\?\"));
+        } else {
+            assert_eq!(Path::new(&written), mixed);
+        }
     }
 
     #[test]
