@@ -352,7 +352,7 @@ impl Shelf {
             .iter()
             .map(|install| {
                 let kind = match std::fs::read_link(&install.path) {
-                    Ok(target) => format!("link to {}", target.display()),
+                    Ok(target) => format!("link to {}", env.tilde(&target)),
                     Err(_) if Some(&install.path) == skill.shared.as_ref() => "shared copy".into(),
                     Err(_) if install.shared => "copy".into(),
                     Err(_) => "folder".to_owned(),

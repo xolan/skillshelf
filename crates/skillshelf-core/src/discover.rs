@@ -340,7 +340,7 @@ pub fn update_skill(env: &Env, name: &str, skill: &FetchedSkill) -> Result<Vec<A
 /// Downloads wait here: next to `~/.agents/skills`, so installing is a rename, but outside it,
 /// so Codex never loads a skill that is only being previewed.
 pub(crate) fn staging_root(env: &Env) -> PathBuf {
-    env.home.join(".agents/.skillshelf-staging")
+    env.home.join(".agents").join(".skillshelf-staging")
 }
 
 /// Removes downloads left by an earlier run.

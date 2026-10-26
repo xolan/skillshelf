@@ -46,11 +46,11 @@ impl Env {
     }
 
     pub fn agents_skills(&self) -> PathBuf {
-        self.home.join(".agents/skills")
+        self.home.join(".agents").join("skills")
     }
 
     pub fn skill_lock(&self) -> PathBuf {
-        self.home.join(".agents/.skill-lock.json")
+        self.home.join(".agents").join(".skill-lock.json")
     }
 
     pub fn claude_skills(&self) -> PathBuf {
@@ -70,13 +70,13 @@ impl Env {
     }
 
     pub fn codex_plugin_cache(&self) -> PathBuf {
-        self.codex_dir.join("plugins/cache")
+        self.codex_dir.join("plugins").join("cache")
     }
 
-    /// `path` with the home directory shown as `~`.
+    /// `path` with the home directory shown as `~`: `~/…`, or `~\…` on Windows.
     pub fn tilde(&self, path: &Path) -> String {
         match path.strip_prefix(&self.home) {
-            Ok(rest) => format!("~/{}", rest.display()),
+            Ok(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),
             Err(_) => path.display().to_string(),
         }
     }
@@ -147,6 +147,27 @@ fn login_shell_path() -> Option<OsString> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paths_use_the_platform_separator() {
+        let home = if cfg!(windows) { r"C:\h" } else { "/h" };
+        let env = Env::at(Path::new(home));
+        let shown = env.tilde(&env.agents_skills().join("s"));
+        if cfg!(windows) {
+            assert_eq!(shown, r"~\.agents\skills\s");
+            assert_eq!(
+                env.skill_lock(),
+                Path::new(r"C:\h\.agents\.skill-lock.json")
+            );
+            assert_eq!(
+                env.codex_plugin_cache().to_str(),
+                Some(r"C:\h\.codex\plugins\cache")
+            );
+        } else {
+            assert_eq!(shown, "~/.agents/skills/s");
+        }
+        assert_eq!(env.tilde(Path::new("../x")), "../x");
+    }
 
     #[test]
     fn merge_paths_keeps_own_order_first() {
