@@ -52,6 +52,7 @@ cp crates/skillshelf/themes/base16/LICENSE "dist/$name/LICENSE-base16-schemes"
 cp -r assets/linux/. "dist/$name/"
 # The embedded Geist fonts are under the OFL, which must travel with them.
 cp crates/skillshelf/fonts/OFL.txt "dist/$name/OFL-Geist.txt"
+cp assets/brand/skillshelf.svg "dist/$name/"
 tar -C dist -czf "dist/$name.tar.gz" "$name"
 (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
 echo "dist/$name.tar.gz"

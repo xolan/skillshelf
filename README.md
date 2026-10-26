@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/brand/skillshelf-wordmark.svg" alt="skillshelf" width="236"></p>
+
 # skillshelf
 
 A desktop app for managing agent skills and plugins for Claude Code and Codex CLI.
@@ -8,6 +10,18 @@ A desktop app for managing agent skills and plugins for Claude Code and Codex CL
 - Skills installed from GitHub show when a newer version is out, and update in place.
 
 Linux only for now. See [PLAN.md](PLAN.md).
+
+## Install
+
+Download a tarball from [Releases](https://github.com/xolan/skillshelf/releases), then:
+
+```bash
+tar -xzf skillshelf-*-x86_64-unknown-linux-gnu.tar.gz
+cd skillshelf-*/
+install -Dm755 skillshelf ~/.local/bin/skillshelf
+install -Dm644 skillshelf.desktop ~/.local/share/applications/skillshelf.desktop
+install -Dm644 skillshelf.svg ~/.local/share/icons/hicolor/scalable/apps/skillshelf.svg
+```
 
 ## Development
 
