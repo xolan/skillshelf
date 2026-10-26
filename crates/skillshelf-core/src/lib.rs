@@ -48,6 +48,14 @@ impl Provider {
         }
     }
 
+    /// The product's full name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Provider::Claude => "Claude Code",
+            Provider::Codex => "Codex CLI",
+        }
+    }
+
     /// Name of the provider's command-line tool.
     pub fn cli(self) -> &'static str {
         match self {

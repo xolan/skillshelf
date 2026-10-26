@@ -7,7 +7,8 @@ mod licenses;
 mod palette;
 mod preferences;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use gpui_kit::assets::IconName as Lucide;
@@ -28,8 +29,8 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use skillshelf_core::{
-    Action as Step, AvailablePlugin, Env, FetchedSkill, Plugin, Skill, SkillHit, SkillUpdate,
-    clean_staging, execute, scan_plugins, scan_skills,
+    Action as Step, AvailablePlugin, Env, FetchedSkill, Plugin, Provider, Skill, SkillHit,
+    SkillUpdate, clean_staging, execute, scan_plugins, scan_skills,
 };
 
 use crate::settings::{self, GitHubAccess};
@@ -73,6 +74,14 @@ enum Page {
 }
 
 impl Page {
+    /// The skill and plugin pages, which have nothing to show until an agent is turned on.
+    fn needs_agents(self) -> bool {
+        matches!(
+            self,
+            Page::Skills | Page::Plugins | Page::FindSkills | Page::FindPlugins
+        )
+    }
+
     fn placeholder(self) -> &'static str {
         match self {
             Page::Skills => "Filter skills",
@@ -100,6 +109,11 @@ enum Selection {
 pub struct Shelf {
     env: Option<Env>,
     page: Page,
+    /// The agents skillshelf manages, as turned on in Settings; the others are left alone.
+    agents: Vec<Provider>,
+    /// Where each agent installed on this computer shows it is, once the environment is read.
+    found: BTreeMap<Provider, PathBuf>,
+    /// Skills of the managed agents.
     skills: Vec<Skill>,
     plugins: Vec<Plugin>,
     /// Providers whose plugin list could not be read.
@@ -163,6 +177,8 @@ impl Shelf {
         let mut shelf = Shelf {
             env: None,
             page: Page::Skills,
+            agents: settings::load_agents(),
+            found: BTreeMap::new(),
             skills: Vec::new(),
             plugins: Vec::new(),
             plugin_errors: Vec::new(),
@@ -204,6 +220,7 @@ impl Shelf {
         self.loading = true;
         cx.notify();
         let env = self.env.clone();
+        let agents = self.agents.clone();
         cx.spawn(async move |this, cx| {
             let loaded = cx
                 .background_spawn(async move {
@@ -215,16 +232,21 @@ impl Shelf {
                             env
                         }
                     };
-                    let skills = scan_skills(&env)?;
-                    let (plugins, errors) = scan_plugins(&env);
-                    anyhow::Ok((env, skills, plugins, errors))
+                    let found = Provider::ALL
+                        .into_iter()
+                        .filter_map(|p| Some((p, env.locate(p)?)))
+                        .collect();
+                    let skills = installed::for_agents(scan_skills(&env)?, &agents);
+                    let (plugins, errors) = scan_plugins(&env, &agents);
+                    anyhow::Ok((env, found, skills, plugins, errors))
                 })
                 .await;
             this.update(cx, |this, cx| {
                 this.loading = false;
                 match loaded {
-                    Ok((env, skills, plugins, errors)) => {
+                    Ok((env, found, skills, plugins, errors)) => {
                         this.env = Some(env);
+                        this.found = found;
                         this.skills = skills;
                         this.plugins = plugins;
                         this.plugin_errors = errors;
@@ -363,6 +385,9 @@ impl Shelf {
 
     /// What each row of the current page's list selects, top to bottom.
     fn rows(&self, cx: &App) -> Vec<Selection> {
+        if self.agents.is_empty() && self.page.needs_agents() {
+            return Vec::new();
+        }
         match self.page {
             Page::Skills => self
                 .visible_skills(cx)
@@ -536,6 +561,9 @@ impl Shelf {
     }
 
     fn render_page(&self, cx: &mut Context<Self>) -> AnyElement {
+        if self.agents.is_empty() && self.page.needs_agents() {
+            return self.no_agents(cx);
+        }
         match self.page {
             Page::Skills => self.render_skills(cx),
             Page::Plugins => self.render_plugins(cx),
@@ -544,6 +572,34 @@ impl Shelf {
             Page::Settings => self.render_settings(cx),
             Page::Licenses => self.render_licenses(cx),
         }
+    }
+
+    fn no_agents(&self, cx: &mut Context<Self>) -> AnyElement {
+        empty_state(
+            IconName::Settings,
+            "No agents turned on",
+            "Turn on the agents you use in Settings. skillshelf lists and changes skills and \
+             plugins for those only.",
+            cx,
+        )
+        .child(
+            Button::new("open-settings")
+                .small()
+                .primary()
+                .label("Open Settings")
+                .on_click(
+                    cx.listener(|this, _, window, cx| this.open_page(Page::Settings, window, cx)),
+                ),
+        )
+        .into_any_element()
+    }
+
+    /// Column titles for the managed agents, after an "All" column when there are several.
+    fn agent_columns(&self) -> Vec<&'static str> {
+        let all = (self.agents.len() > 1).then_some("All");
+        all.into_iter()
+            .chain(self.agents.iter().map(|p| p.label()))
+            .collect()
     }
 
     fn page_header(

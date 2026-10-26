@@ -176,11 +176,12 @@ fn download(
 }
 
 /// Moves a fetched skill into `~/.agents/skills`, records it in the lock file, and exposes it to
-/// the chosen providers. Fails if the name is already taken.
+/// the chosen `providers` out of the `offered` ones. Fails if the name is already taken.
 pub fn install_skill(
     env: &Env,
     skill: &FetchedSkill,
     providers: &[Provider],
+    offered: &[Provider],
 ) -> Result<Vec<Action>> {
     let target = env.agents_skills().join(&skill.name);
     let link = env.claude_skills().join(&skill.name);
@@ -220,8 +221,9 @@ pub fn install_skill(
             target: claude_link_target(env, &target, &skill.name),
         });
     }
-    // Codex reads ~/.agents/skills on its own, so leaving it out means turning it off there.
-    if !providers.contains(&Provider::Codex) {
+    // Codex reads ~/.agents/skills on its own, so leaving it out means turning it off there. A
+    // provider that wasn't offered is not managed here, and its config is left alone.
+    if offered.contains(&Provider::Codex) && !providers.contains(&Provider::Codex) {
         actions.push(Action::SetCodexSkill {
             skill_md: target.join("SKILL.md"),
             enabled: false,
@@ -788,7 +790,7 @@ mod tests {
             skill_md: String::new(),
             files: vec!["SKILL.md".into()],
         };
-        let actions = install_skill(&env, &skill, &[Provider::Claude]).unwrap();
+        let actions = install_skill(&env, &skill, &[Provider::Claude], &Provider::ALL).unwrap();
         assert_eq!(actions.len(), 4);
         let target = if cfg!(windows) {
             env.agents_skills().join("s")
@@ -809,8 +811,16 @@ mod tests {
                 enabled: false
             }
         );
+        // With Codex not managed, its config is not touched.
+        let claude_only = [Provider::Claude];
+        let actions = install_skill(&env, &skill, &claude_only, &claude_only).unwrap();
+        assert!(
+            !actions
+                .iter()
+                .any(|a| matches!(a, Action::SetCodexSkill { .. }))
+        );
         fs::create_dir_all(env.agents_skills().join("s")).unwrap();
-        assert!(install_skill(&env, &skill, &Provider::ALL).is_err());
+        assert!(install_skill(&env, &skill, &Provider::ALL, &Provider::ALL).is_err());
     }
 
     #[test]
@@ -978,7 +988,7 @@ mod tests {
         assert_eq!(fetched.name, "find-skills");
         assert_eq!(fetched.folder_hash.len(), 40);
         assert!(fetched.files.contains(&"SKILL.md".to_owned()));
-        let actions = install_skill(&env, &fetched, &Provider::ALL).unwrap();
+        let actions = install_skill(&env, &fetched, &Provider::ALL, &Provider::ALL).unwrap();
         crate::execute(&env, &actions).unwrap();
         let skills = crate::scan_skills(&env).unwrap();
         assert_eq!(skills[0].source.as_deref(), Some("vercel-labs/skills"));

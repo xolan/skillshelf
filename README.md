@@ -8,6 +8,8 @@ A desktop app for managing agent skills and plugins for Claude Code and Codex CL
 - Search [skills.sh](https://skills.sh) for skills and provider marketplaces for plugins, and install them.
 - Skills live in `~/.agents/skills/` and are shared with `npx skills` through `~/.agents/.skill-lock.json`.
 - Skills installed from GitHub show when a newer version is out, and update in place.
+- Pick the agents it manages in Settings; it leaves the others alone. None are on until you turn
+  them on.
 
 Runs on Linux and Windows. See [PLAN.md](PLAN.md).
 

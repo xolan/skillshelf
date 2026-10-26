@@ -4,6 +4,8 @@ use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
 
+use crate::Provider;
+
 /// Windows `CREATE_NO_WINDOW`: a console program started from a GUI app runs without opening a
 /// console window of its own.
 #[cfg(windows)]
@@ -116,14 +118,36 @@ impl Env {
     /// The file to start for `program`. On Windows, `Command` only looks for `<program>.exe`,
     /// but npm installs `claude.cmd` and `codex.cmd`, so look on `PATH` the way a shell does.
     fn find(&self, program: &str) -> PathBuf {
-        #[cfg(windows)]
+        if cfg!(windows)
+            && let Some(found) = self.tool_path(program)
         {
-            let path = self.path.clone().or_else(|| std::env::var_os("PATH"));
-            if let Some(found) = path.and_then(|path| find_on_path(program, &path)) {
-                return found;
-            }
+            return found;
         }
         PathBuf::from(program)
+    }
+
+    /// Where `program` is on `PATH`, if it is.
+    fn tool_path(&self, program: &str) -> Option<PathBuf> {
+        let path = self.path.clone().or_else(|| std::env::var_os("PATH"))?;
+        #[cfg(windows)]
+        let found = find_on_path(program, &path);
+        #[cfg(not(windows))]
+        let found = std::env::split_paths(&path)
+            .map(|dir| dir.join(program))
+            .find(|file| file.is_file());
+        found
+    }
+
+    /// Where the provider shows it is installed: its directory, or else its tool on `PATH`.
+    pub fn locate(&self, provider: Provider) -> Option<PathBuf> {
+        let dir = match provider {
+            Provider::Claude => &self.claude_dir,
+            Provider::Codex => &self.codex_dir,
+        };
+        if dir.is_dir() {
+            return Some(dir.clone());
+        }
+        self.tool_path(provider.cli())
     }
 }
 
@@ -222,6 +246,24 @@ mod tests {
         assert_eq!(merged, paths(&["/a", "/b", "/c", "/d"]));
         assert_eq!(merge_paths(None, paths(&["/c"])), paths(&["/c"]));
         assert_eq!(merge_paths(None, None), None);
+    }
+
+    #[test]
+    fn locates_providers_by_directory_or_tool() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("bin");
+        std::fs::create_dir_all(dir.path().join(".claude")).unwrap();
+        std::fs::create_dir(&bin).unwrap();
+        let mut env = Env::at(dir.path());
+        env.path = Some(bin.clone().into());
+        assert_eq!(
+            env.locate(Provider::Claude),
+            Some(dir.path().join(".claude"))
+        );
+        assert_eq!(env.locate(Provider::Codex), None);
+        let tool = bin.join(if cfg!(windows) { "codex.cmd" } else { "codex" });
+        std::fs::write(&tool, "").unwrap();
+        assert_eq!(env.locate(Provider::Codex), Some(tool));
     }
 
     #[cfg(windows)]

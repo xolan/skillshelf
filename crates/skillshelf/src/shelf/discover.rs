@@ -7,9 +7,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use skillshelf_core::{
-    AvailablePlugin, Provider, SkillHit, available_plugins, fetch_skill, search_skills,
-};
+use skillshelf_core::{AvailablePlugin, SkillHit, available_plugins, fetch_skill, search_skills};
 
 use super::change::{Change, open_change_dialog};
 use super::{
@@ -96,11 +94,12 @@ impl Shelf {
         let Some(env) = self.env.clone() else {
             return;
         };
+        let agents = self.agents.clone();
         self.loading_offers = true;
         cx.notify();
         cx.spawn(async move |this, cx| {
             let (offers, errors) = cx
-                .background_spawn(async move { available_plugins(&env) })
+                .background_spawn(async move { available_plugins(&env, &agents) })
                 .await;
             this.update(cx, |this, cx| {
                 this.loading_offers = false;
@@ -332,9 +331,14 @@ impl Shelf {
             .size_full()
             .child(self.page_header("Find plugins", count, cx))
             .children(warnings)
-            .child(self.column_header(&["Installs", "Claude", "Codex"], cx))
+            .child(self.column_header(&self.offer_columns(), cx))
             .child(body)
             .into_any_element()
+    }
+
+    fn offer_columns(&self) -> Vec<&'static str> {
+        let agents = self.agents.iter().map(|p| p.label());
+        ["Installs"].into_iter().chain(agents).collect()
     }
 
     fn offer_row(&self, offer: &AvailablePlugin, cx: &mut Context<Self>) -> AnyElement {
@@ -348,8 +352,8 @@ impl Shelf {
                 .child(offer.install_count.map(compact).unwrap_or_default())
                 .into_any_element(),
         ];
-        for provider in Provider::ALL {
-            let state = match offer.providers.get(&provider) {
+        for provider in &self.agents {
+            let state = match offer.providers.get(provider) {
                 Some(true) => "installed",
                 Some(false) => "available",
                 None => "",
@@ -390,10 +394,11 @@ impl Shelf {
             })
             .disabled(!installable || self.busy)
             .on_click(cx.listener(|this, _, window, cx| this.install_offer(window, cx)));
-        let providers: Vec<_> = Provider::ALL
-            .into_iter()
+        let providers: Vec<_> = self
+            .agents
+            .iter()
             .map(|provider| {
-                let state = match offer.providers.get(&provider) {
+                let state = match offer.providers.get(provider) {
                     Some(true) => "Installed",
                     Some(false) => "Available",
                     None => "Not in its marketplaces",

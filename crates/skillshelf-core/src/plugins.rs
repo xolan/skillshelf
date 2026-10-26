@@ -25,12 +25,12 @@ pub struct PluginInstall {
     pub enabled: bool,
 }
 
-/// Installed user-scope plugins. Each provider's tool is the source of truth; a provider whose
-/// tool fails is reported in the error list and skipped.
-pub fn scan_plugins(env: &Env) -> (Vec<Plugin>, Vec<String>) {
+/// Installed user-scope plugins of the given providers. Each provider's tool is the source of
+/// truth; a provider whose tool fails is reported in the error list and skipped.
+pub fn scan_plugins(env: &Env, providers: &[Provider]) -> (Vec<Plugin>, Vec<String>) {
     let mut plugins: BTreeMap<String, Plugin> = BTreeMap::new();
     let mut errors = Vec::new();
-    for provider in Provider::ALL {
+    for &provider in providers {
         let listed = env
             .run(
                 provider.cli(),
@@ -151,15 +151,15 @@ pub struct AvailablePlugin {
     pub providers: BTreeMap<Provider, bool>,
 }
 
-/// Every plugin the configured marketplaces offer, most installed first. A provider whose tool
-/// fails is reported in the error list and skipped.
-pub fn available_plugins(env: &Env) -> (Vec<AvailablePlugin>, Vec<String>) {
+/// Every plugin the given providers' marketplaces offer, most installed first. A provider whose
+/// tool fails is reported in the error list and skipped.
+pub fn available_plugins(env: &Env, providers: &[Provider]) -> (Vec<AvailablePlugin>, Vec<String>) {
     let mut plugins: BTreeMap<String, AvailablePlugin> = BTreeMap::new();
     let mut errors = Vec::new();
     let args: Vec<String> = ["plugin", "list", "--available", "--json"]
         .map(String::from)
         .into();
-    for provider in Provider::ALL {
+    for &provider in providers {
         let listed = env
             .run(provider.cli(), &args)
             .and_then(|json| match provider {
