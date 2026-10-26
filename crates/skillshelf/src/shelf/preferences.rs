@@ -15,7 +15,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use skillshelf_core::github_rate_limit;
 
-use super::Shelf;
+use super::{Page, Shelf, divider};
 use crate::settings::{self, GitHubAccess};
 
 const NEW_TOKEN_URL: &str = "https://github.com/settings/personal-access-tokens/new";
@@ -197,7 +197,24 @@ impl Shelf {
                             .when(self.github_access == GitHubAccess::Token, |this| {
                                 this.child(token_form)
                             })
-                            .child(div().text_sm().child(status)),
+                            .child(div().text_sm().child(status))
+                            .child(divider(cx))
+                            .child(div().font_semibold().child("About"))
+                            .child(div().text_sm().text_color(muted).child(format!(
+                                "skillshelf {}, released under the MIT License.",
+                                env!("CARGO_PKG_VERSION")
+                            )))
+                            .child(
+                                h_flex().child(
+                                    Button::new("licenses")
+                                        .small()
+                                        .icon(IconName::FileText)
+                                        .label("Third-party licenses")
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.open_page(Page::Licenses, window, cx)
+                                        })),
+                                ),
+                            ),
                     ),
             )
             .into_any_element()
