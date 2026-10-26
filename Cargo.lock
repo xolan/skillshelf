@@ -5888,6 +5888,7 @@ dependencies = [
  "embed-resource",
  "gpui-kit",
  "resvg 0.46.0",
+ "serde",
  "serde_json",
  "serde_yaml_ng",
  "skillshelf-core",

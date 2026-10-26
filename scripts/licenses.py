@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Writes THIRD_PARTY_LICENSES.md: the assets and Rust crates skillshelf ships, with their licenses.
+"""Writes the assets and Rust crates skillshelf ships, with their licenses.
 
-Run it through `mise run licenses`. With `--check`, fails instead of writing when the file is out
-of date. Uses only `cargo` and the crate sources Cargo has already downloaded.
+THIRD_PARTY_LICENSES.md is for people; crates/skillshelf/licenses.json holds the same for the app's
+Licenses page, one entry per asset or crate. Run it through `mise run licenses`. With `--check`,
+fails instead of writing when a file is out of date. Uses only `cargo` and the crate sources Cargo
+has already downloaded.
 """
 
 import json
@@ -13,6 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "THIRD_PARTY_LICENSES.md"
+APP_OUTPUT = ROOT / "crates" / "skillshelf" / "licenses.json"
 LICENSE_PREFIXES = ("LICENSE", "LICENCE", "COPYING", "NOTICE", "UNLICENSE")
 # Platforms release builds ship for; add a triple here when a new one ships.
 TARGETS = [
@@ -95,8 +98,14 @@ def split_copyright(text):
     return notices, normalize("\n".join(rest))
 
 
-# Phrases that identify a license text, checked in order.
+# Phrases that identify a license text, checked in order. The OFL quotes the MIT grant, so it
+# comes first.
 KNOWN_LICENSES = [
+    ("SIL Open Font License", "SIL Open Font License 1.1"),
+    ("Community Data License Agreement - Permissive - Version 2.0", "CDLA Permissive 2.0"),
+    ("CC0 1.0 Universal", "Creative Commons CC0 1.0"),
+    ("GNU General Public License Version 2", "GNU General Public License 2.0"),
+    ("dual-licensed under the Unlicense and MIT", "Unlicense or MIT"),
     ("Apache License", "Apache License 2.0"),
     ("Mozilla Public License", "Mozilla Public License 2.0"),
     ("Boost Software License", "Boost Software License 1.0"),
@@ -131,7 +140,44 @@ def fence(text):
     return f"{ticks}text\n{text}\n{ticks}"
 
 
+def group_texts(things):
+    """Entries for the app, one per thing, and the license texts they point to.
+
+    Texts that differ only in their copyright lines are one text, which lists everyone using it and
+    all their copyright lines; each entry keeps only its own.
+    """
+    keys = {}  # whitespace-insensitive body -> index into texts
+    texts = []
+    entries = []
+    for thing in things:
+        refs = {}  # index into texts -> this thing's copyright lines
+        for text in thing["texts"]:
+            notices, body = split_copyright(text)
+            key = re.sub(r"https?://", "", " ".join(body.split()))
+            if key not in keys:
+                keys[key] = len(texts)
+                texts.append({"name": license_name(text), "body": body, "users": [], "notices": []})
+            ix = keys[key]
+            user = f"{thing['name']} {thing['version']}".strip()
+            if user not in texts[ix]["users"]:
+                texts[ix]["users"].append(user)
+            texts[ix]["notices"] += [n for n in notices if n not in texts[ix]["notices"]]
+            own = refs.setdefault(ix, [])
+            own += [n for n in notices if n not in own]
+        entries.append(
+            {
+                "name": thing["name"],
+                "version": thing["version"],
+                "license": thing["license"],
+                "link": thing["link"],
+                "texts": [{"text": ix, "notices": notices} for ix, notices in refs.items()],
+            }
+        )
+    return entries, texts
+
+
 def render():
+    """The Markdown file and the app's JSON."""
     cargo("fetch", "--locked")
     by_id = {}
     for target in TARGETS:
@@ -140,6 +186,29 @@ def render():
         )
         by_id.update({p["id"]: p for p in shipped_packages(metadata)})
     packages = sorted(by_id.values(), key=lambda p: (p["name"].lower(), p["version"]))
+
+    things = [
+        {
+            "name": name,
+            "version": "",
+            "license": spdx,
+            "link": url,
+            "texts": [normalize((ROOT / path).read_text(encoding="utf-8"))] if path else [],
+        }
+        for name, spdx, url, path in ASSETS
+    ]
+    for package in packages:
+        name = package["name"]
+        things.append(
+            {
+                "name": name,
+                "version": package["version"],
+                "license": package.get("license") or "see repository",
+                "link": package.get("repository") or f"https://crates.io/crates/{name}",
+                "texts": license_texts(package),
+            }
+        )
+    entries, texts = group_texts(things)
 
     out = [
         "# Third-party licenses",
@@ -165,33 +234,17 @@ def render():
         "",
     ]
     out += ["| Crate | Version | License |", "| --- | --- | --- |"]
-    # Texts that differ only in their copyright lines share one entry listing those lines.
-    groups = {}  # whitespace-insensitive body -> (name, body, crates, copyright lines)
-    missing = []
-    for package in packages:
-        name = package["name"]
-        link = package.get("repository") or f"https://crates.io/crates/{name}"
-        out.append(f"| [{name}]({link}) | {package['version']} | {package.get('license') or 'see repository'} |")
-        texts = license_texts(package)
-        if not texts:
-            missing.append(package)
-        for text in texts:
-            notices, body = split_copyright(text)
-            key = re.sub(r"https?://", "", " ".join(body.split()))
-            _, _, users, lines = groups.setdefault(key, (license_name(text), body, [], []))
-            users.append(f"{name} {package['version']}")
-            lines += [n for n in notices if n not in lines]
+    crates = entries[len(ASSETS) :]
+    for entry in crates:
+        out.append(f"| [{entry['name']}]({entry['link']}) | {entry['version']} | {entry['license']} |")
 
     out += ["", "## License texts", ""]
-    for name, spdx, _, path in ASSETS:
-        if path:
-            text = (ROOT / path).read_text(encoding="utf-8")
-            out += [f"### {name} ({spdx})", "", fence(normalize(text)), ""]
-    for name, body, users, notices in groups.values():
-        out += [f"### {name}", "", "Used by " + ", ".join(users) + ".", ""]
-        if notices:
-            out += ["Copyright notices:", ""] + [f"- {n}" for n in notices] + [""]
-        out += [fence(body), ""]
+    for text in texts:
+        out += [f"### {text['name']}", "", "Used by " + ", ".join(text["users"]) + ".", ""]
+        if text["notices"]:
+            out += ["Copyright notices:", ""] + [f"- {n}" for n in text["notices"]] + [""]
+        out += [fence(text["body"]), ""]
+    missing = [e for e in crates if not e["texts"]]
     if missing:
         out += [
             "### Crates without a license file",
@@ -200,9 +253,15 @@ def render():
             "full text is in their repository.",
             "",
         ]
-        out += [f"- {p['name']} {p['version']} ({p.get('license') or 'unknown'})" for p in missing]
+        out += [f"- {e['name']} {e['version']} ({e['license']})" for e in missing]
         out.append("")
-    return "\n".join(out).rstrip("\n") + "\n"
+    markdown = "\n".join(out).rstrip("\n") + "\n"
+
+    app = {
+        "entries": entries,
+        "texts": [{"name": t["name"], "body": t["body"]} for t in texts],
+    }
+    return markdown, json.dumps(app, indent=1, ensure_ascii=False) + "\n"
 
 
 def selftest():
@@ -212,18 +271,36 @@ def selftest():
     assert notices == ["Copyright (c) 2020 A", "© 2021 B"], notices
     assert body == "The above copyright notice shall be included.", body
     assert license_name("Permission is hereby granted, free of charge, to any") == "MIT License"
+    assert license_name("the SIL Open Font License. Permission is hereby granted, free of charge") == (
+        "SIL Open Font License 1.1"
+    )
     assert fence("a\n```\nb").startswith("````text")
+
+    mit = "Permission is hereby granted, free of charge, to any person."
+    thing = lambda name, *texts: {"name": name, "version": "1.0", "license": "MIT", "link": "", "texts": list(texts)}
+    entries, texts = group_texts(
+        [thing("a", f"Copyright 2020 A\n{mit}"), thing("b", f"Copyright 2021 B\n{mit}", "Other terms.")]
+    )
+    assert [t["users"] for t in texts] == [["a 1.0", "b 1.0"], ["b 1.0"]], texts
+    assert texts[0]["notices"] == ["Copyright 2020 A", "Copyright 2021 B"], texts
+    assert entries[1]["texts"] == [
+        {"text": 0, "notices": ["Copyright 2021 B"]},
+        {"text": 1, "notices": []},
+    ], entries
 
 
 def main():
     selftest()
-    text = render()
+    outputs = dict(zip((OUTPUT, APP_OUTPUT), render()))
     if "--check" in sys.argv[1:]:
         # Reading in text mode also accepts a checkout with CRLF line endings.
-        if not OUTPUT.exists() or OUTPUT.read_text(encoding="utf-8") != text:
-            sys.exit("THIRD_PARTY_LICENSES.md is out of date; run `mise run licenses`.")
+        stale = [p for p, text in outputs.items() if not p.exists() or p.read_text(encoding="utf-8") != text]
+        if stale:
+            names = " and ".join(p.relative_to(ROOT).as_posix() for p in stale)
+            sys.exit(f"{names} out of date; run `mise run licenses`.")
         return
-    OUTPUT.write_text(text, encoding="utf-8", newline="\n")
+    for path, text in outputs.items():
+        path.write_text(text, encoding="utf-8", newline="\n")
 
 
 if __name__ == "__main__":

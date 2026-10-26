@@ -59,7 +59,7 @@ the bash tasks with its bash), and Python 3 for the licenses tasks.
 | `mise run build` | Build a release binary |
 | `mise run package <target>` | Build a release archive into `dist/`: a tarball, or a zip for Windows |
 | `mise run inventory` | Print installed skills and plugins (read-only) |
-| `mise run licenses` | Regenerate `THIRD_PARTY_LICENSES.md` after changing dependencies |
+| `mise run licenses` | Regenerate `THIRD_PARTY_LICENSES.md` and the app's `licenses.json` after changing dependencies |
 | `mise run icon` | Render the Windows app icon from `assets/brand/skillshelf.svg` |
 
 ## Keyboard

@@ -93,7 +93,7 @@ enum Selection {
     Hit(String),
     /// A marketplace plugin, by its id.
     Offer(String),
-    /// A section of the third-party licenses file, by index.
+    /// An asset or crate on the Licenses page, by index.
     License(usize),
 }
 
