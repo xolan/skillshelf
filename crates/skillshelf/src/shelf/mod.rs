@@ -20,6 +20,7 @@ use gpui_kit::component::{
     input::{Input, InputEvent, InputState},
     menu::{DropdownMenu, PopupMenuItem},
     notification::Notification,
+    resizable::{ResizableState, h_resizable, resizable_panel},
     scroll::ScrollableElement,
     sidebar::{Sidebar, SidebarFooter, SidebarGroup, SidebarMenu, SidebarMenuItem},
     spinner::Spinner,
@@ -152,6 +153,10 @@ pub struct Shelf {
     /// The result of the last GitHub access check, e.g. the hourly request limit.
     access_status: Option<Result<SharedString, SharedString>>,
     access_task: Option<Task<()>>,
+    /// The widths dragged to: the sidebar's, and the details' beside a list and beside a license.
+    sidebar_split: Entity<ResizableState>,
+    detail_split: Entity<ResizableState>,
+    license_split: Entity<ResizableState>,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -208,6 +213,9 @@ impl Shelf {
             has_token: settings::read_token().is_some(),
             access_status: None,
             access_task: None,
+            sidebar_split: cx.new(|_| ResizableState::default()),
+            detail_split: cx.new(|_| ResizableState::default()),
+            license_split: cx.new(|_| ResizableState::default()),
             focus: cx.focus_handle(),
             _subscriptions: vec![subscription],
         };
@@ -516,8 +524,10 @@ impl Shelf {
                 })
                 .on_click(cx.listener(move |this, _, window, cx| this.open_page(page, window, cx)))
         };
+        // Fills its resizable panel, whose handle draws the divider.
         Sidebar::new("navigation")
-            .w(px(210.))
+            .w_full()
+            .border_r_0()
             .line_height(icon_line())
             .child(
                 SidebarGroup::new("Installed").child(SidebarMenu::new().children([
@@ -729,28 +739,40 @@ impl Shelf {
             .into_any_element()
     }
 
-    fn render_detail(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let body = match self.selected.as_ref()? {
+    fn render_detail(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        Some(match self.selected.as_ref()? {
             Selection::Skill(name) => self.skill_detail(self.skill(name)?, cx),
             Selection::Plugin(id) => self.plugin_detail(self.plugin(id)?, cx),
             Selection::Hit(id) => self.hit_detail(self.hits.iter().find(|h| &h.id == id)?, cx),
             Selection::Offer(id) => self.offer_detail(self.offer(id)?, cx),
             Selection::License(ix) => self.license_detail(*ix, cx)?,
+        })
+    }
+
+    /// The page beside the selected item's details, split by a divider that drags.
+    fn render_main(&self, content: AnyElement, cx: &mut Context<Self>) -> impl IntoElement {
+        let detail = self.render_detail(cx);
+        // License texts are long lines of prose: they get more room, and a width of their own.
+        let (id, state, width) = match self.page {
+            Page::Licenses => ("license-split", &self.license_split, px(640.)),
+            _ => ("detail-split", &self.detail_split, px(400.)),
         };
-        // License texts are long lines of prose; give them more room.
-        let width = match self.selected {
-            Some(Selection::License(_)) => px(640.),
-            _ => px(400.),
-        };
-        Some(
-            v_flex()
-                .w(width)
-                .h_full()
-                .flex_shrink_0()
-                .border_l_1()
-                .border_color(cx.theme().border)
-                .child(body),
-        )
+        h_resizable(id)
+            .with_state(state)
+            .child(
+                resizable_panel()
+                    .size_range(px(240.)..Pixels::MAX)
+                    .child(div().size_full().child(content)),
+            )
+            .child(
+                resizable_panel()
+                    .visible(detail.is_some())
+                    .size(width)
+                    .size_range(px(280.)..px(900.))
+                    .fixed()
+                    .flex_none()
+                    .children(detail),
+            )
     }
 
     fn detail_header(
@@ -818,12 +840,19 @@ impl Render for Shelf {
             .text_color(cx.theme().foreground)
             .child(self.render_title_bar(cx))
             .child(
-                h_flex()
-                    .flex_1()
-                    .min_h_0()
-                    .child(self.render_sidebar(cx))
-                    .child(div().flex_1().min_w_0().h_full().child(content))
-                    .children(self.render_detail(cx)),
+                div().flex_1().min_h_0().child(
+                    h_resizable("sidebar-split")
+                        .with_state(&self.sidebar_split)
+                        .child(
+                            resizable_panel()
+                                .size(px(210.))
+                                .size_range(px(160.)..px(360.))
+                                .fixed()
+                                .flex_none()
+                                .child(self.render_sidebar(cx)),
+                        )
+                        .child(resizable_panel().child(self.render_main(content, cx))),
+                ),
             )
     }
 }
