@@ -12,7 +12,7 @@ use crate::config::{
     forget_codex_hooks, read_json, read_toml, set_claude_skill, set_codex_plugin, set_codex_skill,
     write_json, write_toml,
 };
-use crate::discover::add_lock_entry;
+use crate::discover::{add_lock_entry, staging_root};
 use crate::{AvailablePlugin, Env, Plugin, Provider, Skill, SkillInstall};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -61,6 +61,9 @@ impl Action {
         let show = |p: &Path| env.tilde(p);
         let on_off = |enabled: &bool| if *enabled { "on" } else { "off" };
         match self {
+            Action::Remove(path) if path.starts_with(staging_root(env)) => {
+                "Delete the old copy".to_owned()
+            }
             Action::Remove(path) => match fs::symlink_metadata(path) {
                 Ok(m) if m.is_symlink() => format!("Unlink {}", show(path)),
                 _ => format!("Delete {}", show(path)),
@@ -98,7 +101,10 @@ impl Action {
                 "Remove hook trust entries for {id} from {}",
                 show(&env.codex_config())
             ),
-            Action::Rename { to, .. } => format!("Move the download to {}", show(to)),
+            Action::Rename { from, to } if from.starts_with(staging_root(env)) => {
+                format!("Move the download to {}", show(to))
+            }
+            Action::Rename { from, .. } => format!("Move {} aside", show(from)),
             Action::ForgetLock { name } => {
                 format!("Remove {name} from {}", show(&env.skill_lock()))
             }

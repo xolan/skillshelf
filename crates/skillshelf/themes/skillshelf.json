@@ -4,6 +4,8 @@
   "themes": [
     {
       "name": "skillshelf Dark",
+      "font.family": "Geist",
+      "mono_font.family": "Geist Mono",
       "mode": "dark",
       "colors": {
         "background": "#161513",
@@ -59,6 +61,8 @@
     },
     {
       "name": "skillshelf Light",
+      "font.family": "Geist",
+      "mono_font.family": "Geist Mono",
       "mode": "light",
       "colors": {
         "background": "#FBF9F5",

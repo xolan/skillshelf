@@ -17,7 +17,7 @@ use super::{
 };
 
 /// Most marketplace plugins to list at once; the filter narrows the rest.
-const MAX_OFFERS: usize = 200;
+pub(super) const MAX_OFFERS: usize = 200;
 
 impl Shelf {
     /// Searches skills.sh for the filter text once typing pauses.
@@ -40,7 +40,10 @@ impl Shelf {
             this.update(cx, |this, cx| {
                 this.searching = false;
                 match result {
-                    Ok(hits) => this.hits = hits,
+                    Ok(hits) => {
+                        this.hits = hits;
+                        this.list_scroll.set_offset(Point::default());
+                    }
                     Err(e) => this.search_error = Some(format!("{e:#}").into()),
                 }
                 cx.notify();
@@ -59,6 +62,8 @@ impl Shelf {
         // shortcut: a download still running when the selection changes is dropped, and its
         // files are only removed on the next start (clean_staging); cancel it if that matters.
         self.fetch_task = Some(cx.spawn(async move |this, cx| {
+            // Waits like the search does, so arrowing through results downloads only where it stops.
+            cx.background_executor().timer(SEARCH_DELAY).await;
             let result = cx
                 .background_spawn(async move { fetch_skill(&env, &hit.source, &hit.skill_id) })
                 .await;
@@ -106,6 +111,45 @@ impl Shelf {
         self.offers.as_ref()?.iter().find(|o| o.id == id)
     }
 
+    pub(super) fn visible_offers(&self, cx: &App) -> impl Iterator<Item = &AvailablePlugin> {
+        let filter = self.filter_text(cx);
+        self.offers
+            .iter()
+            .flatten()
+            .filter(move |o| matches(&filter, &[&o.id, &o.description]))
+    }
+
+    /// Asks to install the downloaded search result.
+    pub(super) fn install_hit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(Selection::Hit(id)) = &self.selected else {
+            return;
+        };
+        let installed = self
+            .hits
+            .iter()
+            .find(|h| &h.id == id)
+            .is_some_and(|hit| self.installed_skill(hit));
+        if let Some(fetched) = self.fetched.clone()
+            && !installed
+            && !self.busy
+        {
+            open_change_dialog(self, Change::InstallSkill(fetched), window, cx);
+        }
+    }
+
+    /// Asks to install the selected marketplace plugin.
+    pub(super) fn install_offer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(Selection::Offer(id)) = &self.selected else {
+            return;
+        };
+        if let Some(offer) = self.offer(id).cloned()
+            && offer.providers.values().any(|installed| !installed)
+            && !self.busy
+        {
+            open_change_dialog(self, Change::InstallPlugin(offer), window, cx);
+        }
+    }
+
     fn installed_skill(&self, hit: &SkillHit) -> bool {
         self.skills
             .iter()
@@ -128,7 +172,7 @@ impl Shelf {
             empty_state(IconName::Search, "Searching…", "", cx).into_any_element()
         } else {
             let rows = self.hits.iter().map(|hit| self.hit_row(hit, cx)).collect();
-            list_body("hit-list", rows, cx)
+            list_body("hit-list", rows, &self.list_scroll, cx)
         };
         v_flex()
             .size_full()
@@ -165,11 +209,7 @@ impl Shelf {
             .icon(Lucide::Download)
             .label(if installed { "Installed" } else { "Install…" })
             .disabled(installed || self.fetched.is_none() || self.busy)
-            .on_click(cx.listener(|this, _, window, cx| {
-                if let Some(fetched) = this.fetched.clone() {
-                    open_change_dialog(this, Change::InstallSkill(fetched), window, cx);
-                }
-            }));
+            .on_click(cx.listener(|this, _, window, cx| this.install_hit(window, cx)));
         let status = if self.fetching {
             h_flex()
                 .gap_2()
@@ -254,12 +294,8 @@ impl Shelf {
                 empty_state(IconName::Search, "Reading your marketplaces…", "", cx)
                     .into_any_element(),
             ),
-            Some(offers) => {
-                let filter = self.filter_text(cx);
-                let matching: Vec<&AvailablePlugin> = offers
-                    .iter()
-                    .filter(|o| matches(&filter, &[&o.id, &o.description]))
-                    .collect();
+            Some(_) => {
+                let matching: Vec<&AvailablePlugin> = self.visible_offers(cx).collect();
                 let mut rows: Vec<_> = matching
                     .iter()
                     .take(MAX_OFFERS)
@@ -279,7 +315,10 @@ impl Shelf {
                             .into_any_element(),
                     );
                 }
-                (Some(matching.len()), list_body("offer-list", rows, cx))
+                (
+                    Some(matching.len()),
+                    list_body("offer-list", rows, &self.list_scroll, cx),
+                )
             }
         };
         v_flex()
@@ -343,14 +382,7 @@ impl Shelf {
                 "Installed"
             })
             .disabled(!installable || self.busy)
-            .on_click(cx.listener(|this, _, window, cx| {
-                let Some(Selection::Offer(id)) = &this.selected else {
-                    return;
-                };
-                if let Some(offer) = this.offer(id).cloned() {
-                    open_change_dialog(this, Change::InstallPlugin(offer), window, cx);
-                }
-            }));
+            .on_click(cx.listener(|this, _, window, cx| this.install_offer(window, cx)));
         let providers: Vec<_> = Provider::ALL
             .into_iter()
             .map(|provider| {
@@ -394,7 +426,7 @@ fn compact(n: u64) -> String {
 }
 
 /// Files an agent could execute.
-fn is_code(file: &str) -> bool {
+pub(super) fn is_code(file: &str) -> bool {
     let ext = file.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
     matches!(
         ext.as_deref(),

@@ -49,6 +49,8 @@ rm -rf "dist/$name"
 mkdir -p "dist/$name"
 cp "target/$target/release/skillshelf" README.md "dist/$name/"
 cp -r assets/linux/. "dist/$name/"
+# The embedded Geist fonts are under the OFL, which must travel with them.
+cp crates/skillshelf/fonts/OFL.txt "dist/$name/OFL-Geist.txt"
 tar -C dist -czf "dist/$name.tar.gz" "$name"
 (cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
 echo "dist/$name.tar.gz"

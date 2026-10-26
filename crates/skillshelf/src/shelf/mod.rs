@@ -3,13 +3,16 @@
 mod change;
 mod discover;
 mod installed;
+mod palette;
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::{
     ActiveTheme, Disableable, Icon, IconName, Sizable, StyledExt, TitleBar, WindowExt,
     button::{Button, ButtonVariants},
+    command::CommandState,
     h_flex,
     input::{Input, InputEvent, InputState},
     menu::{DropdownMenu, PopupMenuItem},
@@ -23,18 +26,36 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use skillshelf_core::{
-    Action as Step, AvailablePlugin, Env, FetchedSkill, Plugin, Skill, SkillHit, clean_staging,
-    execute, scan_plugins, scan_skills,
+    Action as Step, AvailablePlugin, Env, FetchedSkill, Plugin, Skill, SkillHit, SkillUpdate,
+    clean_staging, execute, scan_plugins, scan_skills,
 };
 
 use crate::theme;
 
-actions!(shelf, [Reload, FocusFilter]);
+actions!(
+    shelf,
+    [
+        Reload,
+        FocusFilter,
+        OpenPalette,
+        SelectPrev,
+        SelectNext,
+        OpenSelected
+    ]
+);
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("ctrl-r", Reload, Some("Shelf")),
         KeyBinding::new("ctrl-f", FocusFilter, Some("Shelf")),
+        KeyBinding::new("ctrl-k", OpenPalette, Some("Shelf")),
+        KeyBinding::new("up", SelectPrev, Some("Shelf")),
+        KeyBinding::new("down", SelectNext, Some("Shelf")),
+        KeyBinding::new("enter", OpenSelected, Some("Shelf")),
+        // The filter field hands the arrows and enter to the list below it.
+        KeyBinding::new("up", SelectPrev, Some("Shelf > Input")),
+        KeyBinding::new("down", SelectNext, Some("Shelf > Input")),
+        KeyBinding::new("enter", OpenSelected, Some("Shelf > Input")),
     ]);
 }
 
@@ -95,6 +116,12 @@ pub struct Shelf {
     offers: Option<Vec<AvailablePlugin>>,
     offer_errors: Vec<String>,
     loading_offers: bool,
+    /// Update checks of installed skills, by name; a skill is checked when it is first selected.
+    updates: HashMap<String, Result<Option<SkillUpdate>, SharedString>>,
+    update_task: Option<Task<()>>,
+    palette: Entity<CommandState>,
+    /// Scrolls the selected row into view when the keyboard moves the selection.
+    list_scroll: ScrollHandle,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -105,6 +132,7 @@ impl Shelf {
             cx.new(|cx| InputState::new(window, cx).placeholder(Page::Skills.placeholder()));
         let subscription = cx.subscribe(&filter, |this, _, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
+                this.list_scroll.set_offset(Point::default());
                 if this.page == Page::FindSkills {
                     this.search(cx);
                 }
@@ -134,9 +162,14 @@ impl Shelf {
             offers: None,
             offer_errors: Vec::new(),
             loading_offers: false,
+            updates: HashMap::new(),
+            update_task: None,
+            palette: cx.new(|cx| CommandState::new(window, cx)),
+            list_scroll: ScrollHandle::new(),
             focus: cx.focus_handle(),
             _subscriptions: vec![subscription],
         };
+        shelf.focus.focus(window, cx);
         shelf.reload(cx);
         shelf
     }
@@ -174,6 +207,7 @@ impl Shelf {
                     Err(e) => this.load_error = Some(format!("{e:#}").into()),
                 }
                 this.refresh_skill_md();
+                this.check_update(cx);
                 if this.page == Page::FindPlugins && this.offers.is_none() && !this.loading_offers {
                     this.load_offers(cx);
                 }
@@ -182,6 +216,13 @@ impl Shelf {
             .ok();
         })
         .detach();
+    }
+
+    /// Reloads and forgets earlier update checks.
+    fn reload_all(&mut self, cx: &mut Context<Self>) {
+        self.updates.clear();
+        self.update_task = None;
+        self.reload(cx);
     }
 
     /// Runs planned steps in the background, then reloads.
@@ -230,6 +271,7 @@ impl Shelf {
         }
         self.page = page;
         self.select(None, cx);
+        self.list_scroll.set_offset(Point::default());
         self.filter.update(cx, |filter, cx| {
             filter.set_value("", window, cx);
             filter.set_placeholder(page.placeholder(), window, cx);
@@ -253,11 +295,13 @@ impl Shelf {
         self.fetch_task = None;
         self.fetching = false;
         self.fetch_error = None;
+        self.update_task = None;
         if let Some(Selection::Hit(id)) = &self.selected
             && let Some(hit) = self.hits.iter().find(|h| &h.id == id).cloned()
         {
             self.fetch(hit, cx);
         }
+        self.check_update(cx);
         self.refresh_skill_md();
         cx.notify();
     }
@@ -286,6 +330,62 @@ impl Shelf {
 
     fn filter_text(&self, cx: &App) -> String {
         self.filter.read(cx).value().trim().to_lowercase()
+    }
+
+    /// What each row of the current page's list selects, top to bottom.
+    fn rows(&self, cx: &App) -> Vec<Selection> {
+        match self.page {
+            Page::Skills => self
+                .visible_skills(cx)
+                .map(|s| Selection::Skill(s.name.clone()))
+                .collect(),
+            Page::Plugins => self
+                .visible_plugins(cx)
+                .map(|p| Selection::Plugin(p.id.clone()))
+                .collect(),
+            // A failed search shows its error, not the earlier results.
+            Page::FindSkills if self.search_error.is_some() => Vec::new(),
+            Page::FindSkills => self
+                .hits
+                .iter()
+                .map(|h| Selection::Hit(h.id.clone()))
+                .collect(),
+            Page::FindPlugins => self
+                .visible_offers(cx)
+                .take(discover::MAX_OFFERS)
+                .map(|o| Selection::Offer(o.id.clone()))
+                .collect(),
+        }
+    }
+
+    /// Moves the selection `delta` rows down (up when negative) and scrolls to it.
+    fn move_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let rows = self.rows(cx);
+        let Some(last) = rows.len().checked_sub(1) else {
+            return;
+        };
+        let current = self
+            .selected
+            .as_ref()
+            .and_then(|s| rows.iter().position(|r| r == s));
+        let ix = match current {
+            Some(ix) => ix.saturating_add_signed(delta).min(last),
+            None if delta < 0 => last,
+            None => 0,
+        };
+        self.list_scroll.scroll_to_item(ix);
+        self.select(Some(rows[ix].clone()), cx);
+    }
+
+    /// Enter: selects the first row, or runs the selected row's install or update.
+    fn open_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match &self.selected {
+            None => self.move_selection(1, cx),
+            Some(Selection::Skill(_)) => self.download_update(window, cx),
+            Some(Selection::Hit(_)) => self.install_hit(window, cx),
+            Some(Selection::Offer(_)) => self.install_offer(window, cx),
+            Some(Selection::Plugin(_)) => {}
+        }
     }
 
     fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -318,7 +418,7 @@ impl Shelf {
                                 .small()
                                 .icon(IconName::RefreshCw)
                                 .tooltip("Reload (Ctrl+R)")
-                                .on_click(cx.listener(|this, _, _, cx| this.reload(cx))),
+                                .on_click(cx.listener(|this, _, _, cx| this.reload_all(cx))),
                         )
                         .child(
                             Button::new("theme")
@@ -490,6 +590,7 @@ impl Shelf {
             .when(!selected, |row| {
                 row.hover(|style| style.bg(theme.list_hover))
             })
+            .on_click(cx.listener(|this, _, window, cx| this.focus.focus(window, cx)))
             .on_click(on_click)
             .child(
                 v_flex()
@@ -586,7 +687,15 @@ impl Render for Shelf {
             .size_full()
             .key_context("Shelf")
             .track_focus(&self.focus)
-            .on_action(cx.listener(|this, _: &Reload, _, cx| this.reload(cx)))
+            .on_action(cx.listener(|this, _: &Reload, _, cx| this.reload_all(cx)))
+            .on_action(
+                cx.listener(|this, _: &OpenPalette, window, cx| this.open_palette(window, cx)),
+            )
+            .on_action(cx.listener(|this, _: &SelectPrev, _, cx| this.move_selection(-1, cx)))
+            .on_action(cx.listener(|this, _: &SelectNext, _, cx| this.move_selection(1, cx)))
+            .on_action(
+                cx.listener(|this, _: &OpenSelected, window, cx| this.open_selected(window, cx)),
+            )
             .on_action(cx.listener(|this, _: &FocusFilter, window, cx| {
                 this.filter
                     .update(cx, |filter, cx| filter.focus(window, cx));
@@ -630,16 +739,29 @@ fn warning(text: impl Into<SharedString>, cx: &mut Context<Shelf>) -> Div {
         .child(div().flex_1().min_w_0().child(text.into()))
 }
 
-fn list_body(id: &'static str, rows: Vec<AnyElement>, cx: &mut Context<Shelf>) -> AnyElement {
+fn list_body(
+    id: &'static str,
+    rows: Vec<AnyElement>,
+    scroll: &ScrollHandle,
+    cx: &mut Context<Shelf>,
+) -> AnyElement {
     if rows.is_empty() {
         return empty_state(IconName::Inbox, "Nothing here", "No matches.", cx).into_any_element();
     }
+    // The rows are the scroll area's direct children, so `scroll_to_item` can find them.
     div()
-        .id(id)
         .flex_1()
         .min_h_0()
-        .overflow_y_scrollbar()
-        .child(v_flex().children(rows))
+        .relative()
+        .child(
+            v_flex()
+                .id(id)
+                .size_full()
+                .overflow_y_scroll()
+                .track_scroll(scroll)
+                .children(rows),
+        )
+        .vertical_scrollbar(scroll)
         .into_any_element()
 }
 

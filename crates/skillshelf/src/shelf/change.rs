@@ -1,25 +1,32 @@
-//! The install and uninstall dialogs: which providers it applies to, and every step that will run.
+//! The install, update and uninstall dialogs: which providers it applies to, and every step that
+//! will run.
 
 use std::collections::BTreeSet;
 
 use anyhow::Result;
 use gpui_kit::component::{
-    ActiveTheme, WindowExt, button::ButtonVariant, checkbox::Checkbox, h_flex, v_flex,
+    ActiveTheme, IconName, WindowExt, button::ButtonVariant, checkbox::Checkbox, h_flex, v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use skillshelf_core::{
     Action as Step, AvailablePlugin, Env, FetchedSkill, Plugin, Provider, Skill, install_plugin,
-    install_skill, uninstall_plugin, uninstall_skill,
+    install_skill, uninstall_plugin, uninstall_skill, update_skill,
 };
 
 use super::Shelf;
+use super::discover::is_code;
 
 pub(super) enum Change {
     UninstallSkill(Skill),
     UninstallPlugin(Plugin),
     InstallSkill(FetchedSkill),
     InstallPlugin(AvailablePlugin),
+    /// Replaces installed skill `name` with a downloaded newer version.
+    UpdateSkill {
+        name: String,
+        download: FetchedSkill,
+    },
 }
 
 impl Change {
@@ -29,11 +36,12 @@ impl Change {
             Change::UninstallPlugin(plugin) => &plugin.id,
             Change::InstallSkill(skill) => &skill.name,
             Change::InstallPlugin(plugin) => &plugin.id,
+            Change::UpdateSkill { name, .. } => name,
         }
     }
 
     fn installs(&self) -> bool {
-        matches!(self, Change::InstallSkill(_) | Change::InstallPlugin(_))
+        !matches!(self, Change::UninstallSkill(_) | Change::UninstallPlugin(_))
     }
 
     /// Providers the user can pick from.
@@ -48,6 +56,7 @@ impl Change {
                 .filter(|(_, installed)| !**installed)
                 .map(|(p, _)| *p)
                 .collect(),
+            Change::UpdateSkill { .. } => BTreeSet::new(),
         }
     }
 }
@@ -69,6 +78,7 @@ impl ChangeForm {
             }
             Change::InstallSkill(skill) => install_skill(&self.env, skill, &providers)?,
             Change::InstallPlugin(plugin) => install_plugin(plugin, &providers),
+            Change::UpdateSkill { name, download } => update_skill(&self.env, name, download)?,
         })
     }
 }
@@ -79,6 +89,11 @@ impl Render for ChangeForm {
             Change::UninstallPlugin(p) if p.installs.contains_key(&Provider::Claude));
         let steps = self.steps();
         let theme = cx.theme();
+        // An update brings files nobody has reviewed yet; list them, flagging code.
+        let new_files = match &self.change {
+            Change::UpdateSkill { download, .. } => download.files.as_slice(),
+            _ => &[],
+        };
         let summary = match &steps {
             Ok(steps) if steps.is_empty() => v_flex().child("Pick at least one provider."),
             Ok(steps) => v_flex().children(steps.iter().map(|step| step.describe(&self.env))),
@@ -123,6 +138,23 @@ impl Render for ChangeForm {
                     .text_sm()
                     .text_color(theme.muted_foreground),
             )
+            .when(!new_files.is_empty(), |this| {
+                this.child(
+                    v_flex()
+                        .gap_1()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child("Files in the new version (scripts an agent may run are flagged):")
+                        .children(new_files.iter().map(|file| {
+                            h_flex()
+                                .gap_2()
+                                .when(is_code(file), |row| {
+                                    row.text_color(theme.warning).child(IconName::TriangleAlert)
+                                })
+                                .child(file.clone())
+                        })),
+                )
+            })
     }
 }
 
@@ -138,8 +170,11 @@ pub(super) fn open_change_dialog(
     };
     let name = change.name().to_owned();
     let installs = change.installs();
-    let installs_download = matches!(change, Change::InstallSkill(_));
-    let (verb, done) = if installs {
+    let moves_download = matches!(change, Change::InstallSkill(_) | Change::UpdateSkill { .. });
+    let updates = matches!(change, Change::UpdateSkill { .. });
+    let (verb, done) = if updates {
+        ("Update", format!("Updated {name}"))
+    } else if installs {
         ("Install", format!("Installed {name}"))
     } else {
         ("Uninstall", format!("Uninstalled {name}"))
@@ -154,7 +189,7 @@ pub(super) fn open_change_dialog(
     });
     let shelf = cx.entity();
     window.open_alert_dialog(cx, move |alert, _, _| {
-        let (form, shelf, done) = (form.clone(), shelf.clone(), done.clone());
+        let (form, shelf, done, name) = (form.clone(), shelf.clone(), done.clone(), name.clone());
         alert
             .title(title.clone())
             .description(form.clone())
@@ -174,9 +209,13 @@ pub(super) fn open_change_dialog(
                     return false;
                 }
                 shelf.update(cx, |shelf, cx| {
-                    if installs_download {
-                        // The install moves the download into place; keep it from being discarded.
+                    if moves_download {
+                        // The change moves the download into place; keep it from being discarded.
                         shelf.fetched = None;
+                    }
+                    if updates {
+                        // Checked again once the reload after the update finishes.
+                        shelf.updates.remove(&name);
                     }
                     shelf.run(steps, Some(done.clone().into()), window, cx);
                 });

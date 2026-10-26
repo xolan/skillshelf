@@ -2,14 +2,16 @@
 
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::{
-    ActiveTheme, Disableable, button::Button, button::ButtonVariants, scroll::ScrollableElement,
-    text::TextView, v_flex,
+    ActiveTheme, Disableable, Sizable, button::Button, button::ButtonVariants, h_flex,
+    scroll::ScrollableElement, spinner::Spinner, text::TextView, v_flex,
 };
 use gpui_kit::*;
-use skillshelf_core::{Plugin, Provider, Skill, toggle_plugin, toggle_skill};
+use skillshelf_core::{
+    Plugin, Provider, Skill, check_skill_update, fetch_update, toggle_plugin, toggle_skill,
+};
 
 use super::change::{Change, open_change_dialog};
-use super::{Selection, Shelf, divider, fact, list_body, matches, warning};
+use super::{SEARCH_DELAY, Selection, Shelf, divider, fact, list_body, matches, warning};
 
 impl Shelf {
     pub(super) fn skill(&self, name: &str) -> Option<&Skill> {
@@ -18,6 +20,136 @@ impl Shelf {
 
     pub(super) fn plugin(&self, id: &str) -> Option<&Plugin> {
         self.plugins.iter().find(|p| p.id == id)
+    }
+
+    pub(super) fn visible_skills(&self, cx: &App) -> impl Iterator<Item = &Skill> {
+        let filter = self.filter_text(cx);
+        self.skills
+            .iter()
+            .filter(move |s| matches(&filter, &[&s.name, &s.description]))
+    }
+
+    pub(super) fn visible_plugins(&self, cx: &App) -> impl Iterator<Item = &Plugin> {
+        let filter = self.filter_text(cx);
+        self.plugins
+            .iter()
+            .filter(move |p| matches(&filter, &[&p.id, &p.description]))
+    }
+
+    fn has_update(&self, name: &str) -> bool {
+        matches!(self.updates.get(name), Some(Ok(Some(_))))
+    }
+
+    /// Asks GitHub whether the selected skill has a newer version, once per skill and only for
+    /// skills installed from GitHub.
+    pub(super) fn check_update(&mut self, cx: &mut Context<Self>) {
+        let Some(Selection::Skill(name)) = self.selected.clone() else {
+            return;
+        };
+        let (Some(env), Some(skill)) = (self.env.clone(), self.skill(&name)) else {
+            return;
+        };
+        if skill.source.is_none() || skill.shared.is_none() || self.updates.contains_key(&name) {
+            return;
+        }
+        // Waits like the search does, so arrowing through the list sends no requests.
+        self.update_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(SEARCH_DELAY).await;
+            let result = {
+                let name = name.clone();
+                cx.background_spawn(async move { check_skill_update(&env, &name) })
+                    .await
+            };
+            this.update(cx, |this, cx| {
+                let result = result.map_err(|e| format!("{e:#}").into());
+                this.updates.insert(name, result);
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    /// Downloads the selected skill's update, then asks to install it.
+    pub(super) fn download_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(Selection::Skill(name)) = self.selected.clone() else {
+            return;
+        };
+        let (Some(env), Some(Ok(Some(update)))) = (self.env.clone(), self.updates.get(&name))
+        else {
+            return;
+        };
+        if self.busy || self.fetching {
+            return;
+        }
+        let update = update.clone();
+        self.fetching = true;
+        self.fetch_error = None;
+        let selection = Selection::Skill(name.clone());
+        self.fetch_task = Some(cx.spawn_in(window, async move |this, cx| {
+            let result = cx
+                .background_spawn(async move { fetch_update(&env, &update) })
+                .await;
+            this.update_in(cx, |this, window, cx| {
+                if this.selected.as_ref() != Some(&selection) {
+                    if let Ok(download) = result {
+                        download.discard();
+                    }
+                    return;
+                }
+                this.fetching = false;
+                match result {
+                    Ok(download) => {
+                        this.set_fetched(Some(download.clone()));
+                        open_change_dialog(
+                            this,
+                            Change::UpdateSkill { name, download },
+                            window,
+                            cx,
+                        );
+                    }
+                    Err(e) => this.fetch_error = Some(format!("{e:#}").into()),
+                }
+                cx.notify();
+            })
+            .ok();
+        }));
+        cx.notify();
+    }
+
+    /// Whether a newer version is on GitHub, with the button that installs it.
+    fn update_status(&self, skill: &Skill, cx: &mut Context<Self>) -> Option<AnyElement> {
+        skill.source.as_ref()?;
+        let muted = cx.theme().muted_foreground;
+        let line = |text: SharedString| h_flex().gap_2().text_sm().text_color(muted).child(text);
+        let element = if self.fetching {
+            line("Downloading the update…".into()).child(Spinner::new().small())
+        } else if let Some(error) = &self.fetch_error {
+            line(error.clone()).text_color(cx.theme().danger)
+        } else {
+            match self.updates.get(&skill.name) {
+                None if self.update_task.is_some() => {
+                    line("Checking for updates…".into()).child(Spinner::new().small())
+                }
+                None => return None,
+                Some(Ok(None)) => line("Up to date with GitHub".into()),
+                Some(Err(error)) => line(format!("Could not check for updates: {error}").into()),
+                Some(Ok(Some(_))) => line("A newer version is on GitHub".into())
+                    .text_color(cx.theme().foreground)
+                    .child(div().flex_1())
+                    .child(
+                        Button::new("update")
+                            .primary()
+                            .small()
+                            .icon(Lucide::Download)
+                            .label("Update…")
+                            .disabled(self.busy)
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.download_update(window, cx)),
+                            ),
+                    ),
+            }
+        };
+        Some(element.into_any_element())
     }
 
     fn set_skill_enabled(
@@ -68,18 +200,13 @@ impl Shelf {
     }
 
     pub(super) fn render_skills(&self, cx: &mut Context<Self>) -> AnyElement {
-        let filter = self.filter_text(cx);
-        let rows: Vec<_> = self
-            .skills
-            .iter()
-            .filter(|s| matches(&filter, &[&s.name, &s.description]))
-            .map(|s| self.skill_row(s, cx))
-            .collect();
+        let skills: Vec<_> = self.visible_skills(cx).collect();
+        let rows: Vec<_> = skills.into_iter().map(|s| self.skill_row(s, cx)).collect();
         v_flex()
             .size_full()
             .child(self.page_header("Skills", Some(rows.len()), cx))
             .child(self.column_header(&["All", "Claude", "Codex"], cx))
-            .child(list_body("skill-list", rows, cx))
+            .child(list_body("skill-list", rows, &self.list_scroll, cx))
             .into_any_element()
     }
 
@@ -124,7 +251,11 @@ impl Shelf {
             format!("skill-{name}"),
             selected,
             skill.name.clone(),
-            skill.shared.is_none().then_some("unmanaged"),
+            if skill.shared.is_none() {
+                Some("unmanaged")
+            } else {
+                self.has_update(&skill.name).then_some("update available")
+            },
             skill.description.clone(),
             switches,
             cx.listener(move |this, _, _, cx| this.select(Some(selection.clone()), cx)),
@@ -133,11 +264,9 @@ impl Shelf {
     }
 
     pub(super) fn render_plugins(&self, cx: &mut Context<Self>) -> AnyElement {
-        let filter = self.filter_text(cx);
-        let rows: Vec<_> = self
-            .plugins
-            .iter()
-            .filter(|p| matches(&filter, &[&p.id, &p.description]))
+        let plugins: Vec<_> = self.visible_plugins(cx).collect();
+        let rows: Vec<_> = plugins
+            .into_iter()
             .map(|p| self.plugin_row(p, cx))
             .collect();
         let warnings: Vec<_> = self
@@ -150,7 +279,7 @@ impl Shelf {
             .child(self.page_header("Plugins", Some(rows.len()), cx))
             .children(warnings)
             .child(self.column_header(&["All", "Claude", "Codex"], cx))
-            .child(list_body("plugin-list", rows, cx))
+            .child(list_body("plugin-list", rows, &self.list_scroll, cx))
             .into_any_element()
     }
 
@@ -248,6 +377,7 @@ impl Shelf {
                             .p_4()
                             .gap_3()
                             .child(skill.description.clone())
+                            .children(self.update_status(skill, cx))
                             .child(v_flex().gap_1().children(locations))
                             .child(divider(cx))
                             .child(
