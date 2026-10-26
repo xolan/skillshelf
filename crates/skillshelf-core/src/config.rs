@@ -41,7 +41,7 @@ pub(crate) fn write_toml(path: &Path, doc: &DocumentMut) -> Result<()> {
 /// Replaces a file in one step, keeping its permissions. Writes through symlinks, so files
 /// managed by a dotfile tool stay links.
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    let path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let path = canonical(path);
     let dir = path
         .parent()
         .context("config file has no parent directory")?;
@@ -61,7 +61,26 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Ok(meta) = fs::metadata(&path) {
         fs::set_permissions(&tmp, meta.permissions())?;
     }
-    fs::rename(&tmp, &path).with_context(|| format!("could not replace {}", path.display()))
+    fs::rename(&tmp, &path).map_err(|error| {
+        let _ = fs::remove_file(&tmp);
+        replace_error(error, &path)
+    })
+}
+
+/// Windows answers "Access is denied" both for a read-only file and for one another program
+/// holds open without letting it be replaced (some editors do; Claude Code and Codex don't).
+fn replace_error(error: std::io::Error, path: &Path) -> anyhow::Error {
+    let shown = path.display();
+    // ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION
+    if cfg!(windows) && matches!(error.raw_os_error(), Some(5 | 32)) {
+        if fs::metadata(path).is_ok_and(|m| m.permissions().readonly()) {
+            return anyhow::anyhow!("could not replace {shown}: it is read-only");
+        }
+        return anyhow::anyhow!(
+            "could not replace {shown}: another program has it open; close that program and try again"
+        );
+    }
+    anyhow::Error::new(error).context(format!("could not replace {shown}"))
 }
 
 /// Skill names turned off in Claude's `skillOverrides`.
@@ -309,14 +328,18 @@ mod tests {
     fn atomic_write_keeps_permissions_and_symlinks() {
         let dir = tempfile::tempdir().unwrap();
         let real = dir.path().join("real.toml");
-        let link = dir.path().join("config.toml");
         fs::write(&real, "a = 1\n").unwrap();
+        #[cfg(unix)]
+        let link = dir.path().join("config.toml");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&real, fs::Permissions::from_mode(0o600)).unwrap();
             std::os::unix::fs::symlink(&real, &link).unwrap();
         }
+        // File symlinks need Developer Mode on Windows; write the file itself there.
+        #[cfg(not(unix))]
+        let link = real.clone();
         write_atomic(&link, b"a = 2\n").unwrap();
         assert_eq!(fs::read_to_string(&real).unwrap(), "a = 2\n");
         #[cfg(unix)]
@@ -333,5 +356,31 @@ mod tests {
                 0o600
             );
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn atomic_write_says_when_another_program_holds_the_file() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(&path, "{}").unwrap();
+        // Shares reading and writing but not deleting, like some editors.
+        let held = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1 | 2)
+            .open(&path)
+            .unwrap();
+        let error = write_atomic(&path, b"{\"a\":1}").unwrap_err().to_string();
+        assert!(error.contains("another program has it open"), "{error}");
+        assert!(!error.contains(r"\\?\"), "{error}");
+        drop(held);
+        assert_eq!(
+            fs::read_dir(dir.path()).unwrap().count(),
+            1,
+            "temporary file left"
+        );
+        write_atomic(&path, b"{\"a\":1}").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{\"a\":1}");
     }
 }
