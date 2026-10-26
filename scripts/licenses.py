@@ -15,7 +15,12 @@ ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "THIRD_PARTY_LICENSES.md"
 LICENSE_PREFIXES = ("LICENSE", "LICENCE", "COPYING", "NOTICE", "UNLICENSE")
 # Platforms release builds ship for; add a triple here when a new one ships.
-TARGETS = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
+TARGETS = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+]
 
 # Files the app embeds that are not Rust crates: (name, license, source, license file).
 ASSETS = [
@@ -156,7 +161,7 @@ def render():
         "",
         "## Rust crates",
         "",
-        f"{len(packages)} crates, built into the {' and '.join(TARGETS)} releases.",
+        f"{len(packages)} crates, built into the {', '.join(TARGETS[:-1])} and {TARGETS[-1]} releases.",
         "",
     ]
     out += ["| Crate | Version | License |", "| --- | --- | --- |"]
