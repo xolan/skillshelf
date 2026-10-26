@@ -26,7 +26,14 @@ fn main() {
             cx.bind_keys([KeyBinding::new("ctrl-q", Quit, None)]);
             cx.on_action(|_: &Quit, cx| cx.quit());
 
+            // The app draws its own title bar, but Windows shows the window's title in
+            // Alt+Tab and on the taskbar.
+            let titlebar = TitlebarOptions {
+                title: cfg!(windows).then(|| "skillshelf".into()),
+                ..TitleBar::title_bar_options()
+            };
             let options = WindowOptions {
+                titlebar: Some(titlebar),
                 window_bounds: Some(WindowBounds::centered(size(px(1180.), px(760.)), cx)),
                 window_min_size: Some(size(px(760.), px(480.))),
                 app_id: Some("skillshelf".into()),
