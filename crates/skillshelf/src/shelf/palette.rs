@@ -50,6 +50,7 @@ impl Shelf {
                         Page::FindPlugins,
                     ),
                     page("Settings", IconName::Settings.into(), Page::Settings),
+                    page("Licenses", IconName::FileText.into(), Page::Licenses),
                 ],
             ),
             (

@@ -3,6 +3,7 @@
 mod change;
 mod discover;
 mod installed;
+mod licenses;
 mod palette;
 mod preferences;
 
@@ -68,6 +69,7 @@ enum Page {
     FindSkills,
     FindPlugins,
     Settings,
+    Licenses,
 }
 
 impl Page {
@@ -78,6 +80,7 @@ impl Page {
             Page::FindSkills => "Search skills.sh",
             Page::FindPlugins => "Filter marketplace plugins",
             Page::Settings => "",
+            Page::Licenses => "Filter licenses and crates",
         }
     }
 }
@@ -90,6 +93,8 @@ enum Selection {
     Hit(String),
     /// A marketplace plugin, by its id.
     Offer(String),
+    /// A section of the third-party licenses file, by index.
+    License(usize),
 }
 
 pub struct Shelf {
@@ -380,6 +385,10 @@ impl Shelf {
                 .map(|o| Selection::Offer(o.id.clone()))
                 .collect(),
             Page::Settings => Vec::new(),
+            Page::Licenses => self
+                .visible_licenses(cx)
+                .map(|(ix, _)| Selection::License(ix))
+                .collect(),
         }
     }
 
@@ -409,7 +418,7 @@ impl Shelf {
             Some(Selection::Skill(_)) => self.download_update(window, cx),
             Some(Selection::Hit(_)) => self.install_hit(window, cx),
             Some(Selection::Offer(_)) => self.install_offer(window, cx),
-            Some(Selection::Plugin(_)) => {}
+            Some(Selection::Plugin(_) | Selection::License(_)) => {}
         }
     }
 
@@ -532,6 +541,7 @@ impl Shelf {
             Page::FindSkills => self.render_find_skills(cx),
             Page::FindPlugins => self.render_find_plugins(cx),
             Page::Settings => self.render_settings(cx),
+            Page::Licenses => self.render_licenses(cx),
         }
     }
 
@@ -668,10 +678,16 @@ impl Shelf {
             Selection::Plugin(id) => self.plugin_detail(self.plugin(id)?, cx),
             Selection::Hit(id) => self.hit_detail(self.hits.iter().find(|h| &h.id == id)?, cx),
             Selection::Offer(id) => self.offer_detail(self.offer(id)?, cx),
+            Selection::License(ix) => self.license_detail(*ix, cx)?,
+        };
+        // License texts are long lines of prose; give them more room.
+        let width = match self.selected {
+            Some(Selection::License(_)) => px(640.),
+            _ => px(400.),
         };
         Some(
             v_flex()
-                .w(px(400.))
+                .w(width)
                 .h_full()
                 .flex_shrink_0()
                 .border_l_1()

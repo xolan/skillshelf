@@ -40,6 +40,7 @@ sudo apt-get install -y libfontconfig-dev libwayland-dev libxkbcommon-x11-dev li
 | `mise run build` | Build a release binary |
 | `mise run package <target>` | Build a release tarball into `dist/` |
 | `mise run inventory` | Print installed skills and plugins (read-only) |
+| `mise run licenses` | Regenerate `THIRD_PARTY_LICENSES.md` after changing dependencies |
 
 ## Keyboard
 
@@ -77,4 +78,5 @@ Pushing to `main` with a new `version` in `Cargo.toml` builds Linux binaries and
 
 ## License
 
-[MIT](LICENSE). The bundled Base16 schemes are from [tinted-theming/schemes](https://github.com/tinted-theming/schemes) (MIT).
+[MIT](LICENSE). Third-party crates, fonts, icons and color schemes are credited in
+[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md), also shown in the app under Settings → Third-party licenses.
