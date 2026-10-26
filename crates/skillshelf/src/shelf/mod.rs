@@ -493,6 +493,7 @@ impl Shelf {
         };
         Sidebar::new("navigation")
             .w(px(210.))
+            .line_height(icon_line())
             .child(
                 SidebarGroup::new("Installed").child(SidebarMenu::new().children([
                     item(
@@ -778,22 +779,30 @@ fn cell() -> Div {
     div().w(px(COLUMN)).flex().justify_center()
 }
 
+/// Line height for 14 px text beside an icon. An even 20 px puts Geist's cap height on the middle
+/// of the line, where the icon is centred; with gpui's default (1.618, so 23 px) the text sits
+/// half a pixel to a pixel above the icon.
+fn icon_line() -> Rems {
+    rems(1.25)
+}
+
+/// An icon beside text that may wrap, centred on the first line.
+fn icon_row(icon: impl IntoElement, text: impl IntoElement) -> Div {
+    h_flex()
+        .gap_2()
+        .items_start()
+        .line_height(icon_line())
+        .child(h_flex().flex_shrink_0().h(icon_line()).child(icon))
+        .child(div().flex_1().min_w_0().child(text))
+}
+
 /// A notice row above a list, e.g. a provider whose tool failed.
 fn warning(text: impl Into<SharedString>, cx: &mut Context<Shelf>) -> Div {
-    h_flex()
+    icon_row(IconName::TriangleAlert, text.into())
         .px_4()
         .py_2()
-        .gap_2()
         .text_sm()
-        .items_start()
         .bg(cx.theme().warning.opacity(0.12))
-        .child(
-            div()
-                .flex_shrink_0()
-                .pt_0p5()
-                .child(IconName::TriangleAlert),
-        )
-        .child(div().flex_1().min_w_0().child(text.into()))
 }
 
 fn list_body(

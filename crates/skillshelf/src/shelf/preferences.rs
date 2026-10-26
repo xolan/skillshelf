@@ -6,7 +6,7 @@ use gpui_kit::component::{
     h_flex,
     input::Input,
     notification::Notification,
-    radio::RadioGroup,
+    radio::{Radio, RadioGroup},
     scroll::ScrollableElement,
     spinner::Spinner,
     v_flex,
@@ -15,7 +15,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use skillshelf_core::github_rate_limit;
 
-use super::{Page, Shelf, divider};
+use super::{Page, Shelf, divider, icon_line, icon_row};
 use crate::settings::{self, GitHubAccess};
 
 const NEW_TOKEN_URL: &str = "https://github.com/settings/personal-access-tokens/new";
@@ -90,22 +90,13 @@ impl Shelf {
             .iter()
             .position(|a| *a == self.github_access);
         let status = match &self.access_status {
-            None => h_flex()
-                .gap_2()
-                .text_color(muted)
-                .child(Spinner::new().small())
-                .child("Checking GitHub access…"),
-            Some(Ok(text)) => h_flex()
-                .gap_2()
-                .text_color(theme.success)
-                .child(IconName::CircleCheck)
-                .child(text.clone()),
-            Some(Err(error)) => h_flex()
-                .gap_2()
-                .items_start()
-                .text_color(theme.danger)
-                .child(div().pt_0p5().child(IconName::CircleAlert))
-                .child(div().flex_1().min_w_0().child(error.clone())),
+            None => icon_row(Spinner::new().small(), "Checking GitHub access…").text_color(muted),
+            Some(Ok(text)) => {
+                icon_row(IconName::CircleCheck, text.clone()).text_color(theme.success)
+            }
+            Some(Err(error)) => {
+                icon_row(IconName::CircleAlert, error.clone()).text_color(theme.danger)
+            }
         };
         let token_place = self
             .env
@@ -188,7 +179,14 @@ impl Shelf {
                             ))
                             .child(
                                 RadioGroup::vertical("github-access")
-                                    .children(GitHubAccess::ALL.map(GitHubAccess::label))
+                                    // The label's own line, not the radio's 17 px one, so it
+                                    // lines up with the circle.
+                                    .children(GitHubAccess::ALL.map(|access| {
+                                        let label = access.label();
+                                        Radio::new(label)
+                                            .accessibility_label(label)
+                                            .child(div().line_height(icon_line()).child(label))
+                                    }))
                                     .selected_index(selected)
                                     .on_change(cx.listener(|this, ix: &usize, window, cx| {
                                         this.set_access(GitHubAccess::ALL[*ix], window, cx)

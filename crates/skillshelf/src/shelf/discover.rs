@@ -13,7 +13,8 @@ use skillshelf_core::{
 
 use super::change::{Change, open_change_dialog};
 use super::{
-    SEARCH_DELAY, Selection, Shelf, cell, divider, empty_state, fact, list_body, matches, warning,
+    SEARCH_DELAY, Selection, Shelf, cell, divider, empty_state, fact, icon_line, list_body,
+    matches, warning,
 };
 use crate::settings::GitHubAccess;
 
@@ -277,6 +278,7 @@ impl Shelf {
             .children(fetched.files.iter().map(|file| {
                 h_flex()
                     .gap_2()
+                    .line_height(icon_line())
                     .text_color(cx.theme().muted_foreground)
                     .when(is_code(file), |row| {
                         row.text_color(cx.theme().warning)

@@ -14,8 +14,8 @@ use skillshelf_core::{
     install_skill, uninstall_plugin, uninstall_skill, update_skill,
 };
 
-use super::Shelf;
 use super::discover::is_code;
+use super::{Shelf, icon_line};
 
 pub(super) enum Change {
     UninstallSkill(Skill),
@@ -148,6 +148,7 @@ impl Render for ChangeForm {
                         .children(new_files.iter().map(|file| {
                             h_flex()
                                 .gap_2()
+                                .line_height(icon_line())
                                 .when(is_code(file), |row| {
                                     row.text_color(theme.warning).child(IconName::TriangleAlert)
                                 })
