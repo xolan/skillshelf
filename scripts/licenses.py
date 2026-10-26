@@ -36,8 +36,9 @@ ASSETS = [
 
 
 def cargo(*args):
+    # Cargo writes UTF-8; Python on Windows would otherwise decode it as the ANSI code page.
     return subprocess.run(
-        ["cargo", *args], cwd=ROOT, check=True, capture_output=True, text=True
+        ["cargo", *args], cwd=ROOT, check=True, capture_output=True, encoding="utf-8"
     ).stdout
 
 
@@ -65,7 +66,7 @@ def license_texts(package):
         extra = root / package["license_file"]
         if extra.is_file():
             files.add(extra)
-    return [normalize(f.read_text(errors="replace")) for f in sorted(files)]
+    return [normalize(f.read_text(encoding="utf-8", errors="replace")) for f in sorted(files)]
 
 
 # "Copyright (c) 2020 …", "Copyright 2020 …", "© 2020 …"; not prose that starts with "copyright".
@@ -179,7 +180,8 @@ def render():
     out += ["", "## License texts", ""]
     for name, spdx, _, path in ASSETS:
         if path:
-            out += [f"### {name} ({spdx})", "", fence(normalize((ROOT / path).read_text())), ""]
+            text = (ROOT / path).read_text(encoding="utf-8")
+            out += [f"### {name} ({spdx})", "", fence(normalize(text)), ""]
     for name, body, users, notices in groups.values():
         out += [f"### {name}", "", "Used by " + ", ".join(users) + ".", ""]
         if notices:
@@ -212,10 +214,11 @@ def main():
     selftest()
     text = render()
     if "--check" in sys.argv[1:]:
-        if not OUTPUT.exists() or OUTPUT.read_text() != text:
+        # Reading in text mode also accepts a checkout with CRLF line endings.
+        if not OUTPUT.exists() or OUTPUT.read_text(encoding="utf-8") != text:
             sys.exit("THIRD_PARTY_LICENSES.md is out of date; run `mise run licenses`.")
         return
-    OUTPUT.write_text(text)
+    OUTPUT.write_text(text, encoding="utf-8", newline="\n")
 
 
 if __name__ == "__main__":

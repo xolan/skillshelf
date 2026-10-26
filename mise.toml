@@ -33,10 +33,13 @@ depends = ["lint", "test", "licenses-check"]
 [tasks.licenses]
 description = "Regenerate THIRD_PARTY_LICENSES.md from the dependency tree"
 run = "python3 -I scripts/licenses.py"
+# Python from python.org installs `python` and `py` on Windows; `python3` is the Store stub there.
+run_windows = "python -I scripts/licenses.py"
 
 [tasks.licenses-check]
 description = "Fail if THIRD_PARTY_LICENSES.md is out of date"
 run = "python3 -I scripts/licenses.py --check"
+run_windows = "python -I scripts/licenses.py --check"
 
 [tasks.icon]
 description = "Render assets/brand/skillshelf.ico (the Windows app icon) from skillshelf.svg"
