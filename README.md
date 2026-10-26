@@ -8,12 +8,29 @@ A desktop app for managing agent skills and plugins for Claude Code and Codex CL
 
 Linux only for now. See [PLAN.md](PLAN.md).
 
-## Build
+## Development
+
+Tooling is pinned in `mise.toml`; run every developer command through [mise](https://mise.jdx.dev).
+Linux builds also need these system libraries:
 
 ```bash
 sudo apt-get install -y libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libx11-xcb-dev
-cargo build --release
 ```
+
+| Command | What it does |
+| --- | --- |
+| `mise run run` | Run the app |
+| `mise run ci` | Formatting, clippy, workflow lint and tests, as CI runs them |
+| `mise run fmt` | Format the code |
+| `mise run build` | Build a release binary |
+| `mise run package <target>` | Build a release tarball into `dist/` |
+| `mise run inventory` | Print installed skills and plugins (read-only) |
+
+## Themes
+
+skillshelf ships its own light and dark themes and a set of Base16 schemes. Drop more Base16
+scheme files (`*.yaml`) into `~/.config/skillshelf/themes/` and pick them from the palette button
+in the title bar.
 
 ## Releases
 

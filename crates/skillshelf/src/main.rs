@@ -1,25 +1,33 @@
-use gpui_kit::component::button::*;
-use gpui_kit::component::*;
+mod assets;
+mod shelf;
+mod theme;
+
+use gpui_kit::component::TitleBar;
 use gpui_kit::*;
 
-struct Hello;
+use crate::shelf::Shelf;
 
-impl Render for Hello {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .v_flex()
-            .size_full()
-            .items_center()
-            .justify_center()
-            .child("skillshelf")
-            .child(Button::new("ok").primary().label("Ok"))
-    }
-}
+actions!(skillshelf, [Quit]);
 
 fn main() {
-    gpui_kit::application().run(|cx| {
-        gpui_kit::init(cx);
-        gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| cx.new(|_| Hello))
+    gpui_kit::application()
+        .with_assets(assets::Assets)
+        .run(|cx| {
+            gpui_kit::init(cx);
+            shelf::bind_keys(cx);
+            cx.bind_keys([KeyBinding::new("ctrl-q", Quit, None)]);
+            cx.on_action(|_: &Quit, cx| cx.quit());
+
+            let options = WindowOptions {
+                window_bounds: Some(WindowBounds::centered(size(px(1180.), px(760.)), cx)),
+                window_min_size: Some(size(px(760.), px(480.))),
+                app_id: Some("skillshelf".into()),
+                ..TitleBar::window_options()
+            };
+            gpui_kit::open_window(options, cx, |window, cx| {
+                theme::init(window, cx);
+                cx.new(|cx| Shelf::new(window, cx))
+            })
             .expect("failed to open window");
-    });
+        });
 }

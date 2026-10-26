@@ -1,0 +1,55 @@
+[tools]
+rust = { version = "1.99.1", components = "rustfmt,clippy" }
+actionlint = "1.7.12"
+
+[tasks.run]
+description = "Run the app"
+run = "cargo run -p skillshelf"
+
+[tasks.build]
+description = "Build a release binary"
+run = "cargo build --release --locked -p skillshelf"
+
+[tasks.test]
+description = "Run all tests"
+run = "cargo test --workspace --locked"
+
+[tasks.fmt]
+description = "Format the code"
+run = "cargo fmt --all"
+
+[tasks.lint]
+description = "Check formatting, clippy and the GitHub workflows"
+run = [
+  "cargo fmt --all --check",
+  "cargo clippy --workspace --all-targets --locked -- -D warnings",
+  "actionlint",
+]
+
+[tasks.ci]
+description = "Everything CI checks"
+depends = ["lint", "test"]
+
+[tasks.inventory]
+description = "Print the installed skills and plugins (read-only)"
+run = "cargo run -q -p skillshelf-core --example inventory"
+
+[tasks.package]
+description = "Build a release tarball for a target into dist/"
+usage = 'arg "<target>" help="Rust target triple, e.g. x86_64-unknown-linux-gnu"'
+run = '''
+#!/usr/bin/env bash
+set -euo pipefail
+target="$usage_target"
+pkgid=$(cargo pkgid -p skillshelf)
+version="${pkgid##*[#@]}"
+cargo build --release --locked -p skillshelf --target "$target"
+name="skillshelf-$version-$target"
+rm -rf "dist/$name"
+mkdir -p "dist/$name"
+cp "target/$target/release/skillshelf" README.md "dist/$name/"
+cp -r assets/linux/. "dist/$name/"
+tar -C dist -czf "dist/$name.tar.gz" "$name"
+(cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
+echo "dist/$name.tar.gz"
+'''
