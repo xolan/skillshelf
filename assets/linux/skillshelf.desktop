@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=skillshelf
+Comment=Manage agent skills and plugins
+Exec=skillshelf
+Icon=skillshelf
+Categories=Development;
+Terminal=false
