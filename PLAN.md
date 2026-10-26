@@ -131,7 +131,7 @@ Plugins: `enabledPlugins` (Claude), `[plugins."id"] enabled` (Codex). No files m
 
 ## Milestones
 
-Status (2026-10-26): 0–5 done; releasing 0.1.0 (the version bump) is left.
+Status (2026-10-26): 0–4 done; 5 done except the app icon and releasing 0.1.0 (the version bump).
 
 0. Spike: sandbox-HOME diffs of `npx skills add/remove -g`, `claude plugin install/uninstall`,
    `codex plugin add/remove` → fixtures and leftover lists. GPUI hello window builds. Release workflow.

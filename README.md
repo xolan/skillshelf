@@ -40,11 +40,10 @@ sudo apt-get install -y libfontconfig-dev libwayland-dev libxkbcommon-x11-dev li
 
 ## Desktop entry
 
-The release tarball holds `skillshelf.desktop` and the icon. To add skillshelf to your app menu:
+The release tarball holds `skillshelf.desktop`. To add skillshelf to your app menu:
 
 ```bash
 install -Dm644 skillshelf.desktop ~/.local/share/applications/skillshelf.desktop
-install -Dm644 skillshelf.svg ~/.local/share/icons/hicolor/scalable/apps/skillshelf.svg
 ```
 
 Put the `skillshelf` binary on your `PATH` (e.g. `~/.local/bin`).
