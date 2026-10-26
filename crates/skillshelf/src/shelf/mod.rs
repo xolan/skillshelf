@@ -32,7 +32,7 @@ use skillshelf_core::{
 };
 
 use crate::settings::{self, GitHubAccess};
-use crate::theme;
+use crate::{assets, theme};
 
 actions!(
     shelf,
@@ -422,14 +422,12 @@ impl Shelf {
                 .pr_2()
                 .justify_between()
                 .child(
-                    h_flex()
-                        .gap_2()
-                        .child(
-                            div()
-                                .text_color(cx.theme().primary)
-                                .child(Lucide::LibraryBig),
-                        )
-                        .child(div().font_semibold().child("skillshelf")),
+                    h_flex().gap_2().child(img(assets::LOGO).size_4()).child(
+                        h_flex()
+                            .font_semibold()
+                            .child("skill")
+                            .child(div().text_color(cx.theme().primary).child("shelf")),
+                    ),
                 )
                 .child(
                     h_flex()

@@ -6,3 +6,4 @@ Exec=skillshelf
 Icon=skillshelf
 Categories=Development;
 Terminal=false
+StartupWMClass=skillshelf
