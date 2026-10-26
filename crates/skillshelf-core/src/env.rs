@@ -84,7 +84,12 @@ impl Env {
     /// Runs a provider tool and returns its stdout.
     pub fn run(&self, program: &str, args: &[String]) -> Result<String> {
         let mut command = Command::new(program);
-        command.args(args).stdin(Stdio::null());
+        // Run from home: a project's tool config (e.g. a mise.toml pinning another codex) must
+        // not leak into global changes.
+        command
+            .args(args)
+            .current_dir(&self.home)
+            .stdin(Stdio::null());
         if let Some(path) = &self.path {
             command.env("PATH", path);
         }

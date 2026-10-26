@@ -1,14 +1,20 @@
 //! Inventory and operations for agent skills and plugins.
 
 mod config;
+mod discover;
 mod env;
 mod ops;
 mod plugins;
 mod skills;
 
+pub use discover::{
+    FetchedSkill, SkillHit, clean_staging, fetch_skill, install_skill, search_skills,
+};
 pub use env::Env;
-pub use ops::{Action, execute, toggle_plugin, toggle_skill, uninstall_plugin, uninstall_skill};
-pub use plugins::{Plugin, PluginInstall, scan_plugins};
+pub use ops::{
+    Action, execute, install_plugin, toggle_plugin, toggle_skill, uninstall_plugin, uninstall_skill,
+};
+pub use plugins::{AvailablePlugin, Plugin, PluginInstall, available_plugins, scan_plugins};
 pub use skills::{Skill, SkillInstall, scan_skills};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

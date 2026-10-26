@@ -11,6 +11,10 @@ Linux first; Windows and macOS later. Global (user-level) scope only.
 - **Plugin discovery:** provider marketplaces (`claude plugin list --available --json`, `codex plugin list --available --json`). Separate "Discover → Plugins" section, not mixed with skills.
 - **Canonical skill location:** `~/.agents/skills/<name>/`. Share `~/.agents/.skill-lock.json` (v3) with `npx skills`, so both tools see the same state.
 - **Toggles:** every skill and plugin can be enabled/disabled per provider, or for all providers at once ("global").
+- **Codex's own directory:** skills in `~/.codex/skills/` are listed and can be toggled and uninstalled too.
+- **Themes:** own light and dark themes, bundled Base16 schemes, plus user Base16 files in
+  `~/.config/skillshelf/themes/`. The choice is saved in `~/.config/skillshelf/settings.json`.
+- **Tooling:** mise pins the toolchain; every developer command is a `mise run` task, CI included.
 
 ## Provider facts (verified on a real machine, 2026-10-26)
 
@@ -25,6 +29,16 @@ Linux first; Windows and macOS later. Global (user-level) scope only.
 
 A skill installed for Claude only is hidden from Codex with a `[[skills.config]] enabled = false` entry,
 because Codex sees every skill in `~/.agents/skills`.
+
+### What the provider tools leave behind (spike, sandbox HOME)
+
+- `claude plugin uninstall` removes the registry entry and `enabledPlugins` key, deletes plugin data
+  unless `--keep-data`, but keeps the cache dir and marks it `.orphaned_at`. Running sessions list
+  their PIDs in the version dir's `.in_use/`; skillshelf deletes the cache only when that is empty.
+- `codex plugin remove` deletes the cache and `[plugins."id"]`, but keeps `[hooks.state."id:*"]`.
+- `codex plugin list --json` includes remote (connector) plugins that are not in `config.toml`, so
+  installed plugins are read from each tool's `list --json`, not from files.
+- Provider tools run from the home directory: a project `mise.toml` must not pick the tool version.
 
 ### Plugins
 
@@ -67,8 +81,9 @@ The planner is pure, so it is unit-tested against fixture homes.
 1. Search skills.sh (`GET https://skills.sh/api/search?q=<q>&limit=<n>`, debounced).
 2. Resolve via GitHub trees API on `source`: find the `SKILL.md` whose frontmatter `name` matches
    `skillId`; record its path and tree SHA (`skillFolderHash`).
-3. Download `https://codeload.github.com/<owner>/<repo>/tar.gz/HEAD`, extract only that folder into a
-   staging dir under `~/.agents/skills/`.
+3. Download `https://codeload.github.com/<owner>/<repo>/tar.gz/<commit>`, extract only that folder into
+   `~/.agents/.skillshelf-staging/` (same filesystem for the final rename, but outside the folder
+   Codex scans). Links, `..` paths and folders over 20 MB are refused; script files are flagged.
 4. Preview, confirm, rename into `~/.agents/skills/<name>`, add lock entry.
 5. Per selected provider: Claude → symlink. Codex → nothing; if Codex not selected, add a disable entry.
 
@@ -105,13 +120,16 @@ Plugins: `enabledPlugins` (Claude), `[plugins."id"] enabled` (Codex). No files m
 
 ## Milestones
 
+Status (2026-10-26): 0–4 done; 5 is next.
+
 0. Spike: sandbox-HOME diffs of `npx skills add/remove -g`, `claude plugin install/uninstall`,
    `codex plugin add/remove` → fixtures and leftover lists. GPUI hello window builds. Release workflow.
 1. Core read-only inventory + tests.
 2. UI shell: sidebar, lists, detail pane, theme, command palette.
 3. Toggles and uninstall (skills, plugins).
 4. Discover: skills.sh search + install; marketplace plugin search + install.
-5. Polish (icon, `.desktop`, errors, empty states). Release 0.1.0.
+5. Polish: app icon, embedded font, command palette (`ctrl-k`), skill updates, keyboard
+   navigation in lists. Release 0.1.0.
 
 Later: macOS/Windows (Windows: directory junctions instead of symlinks), project scope, updates,
 more providers.

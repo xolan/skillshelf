@@ -12,7 +12,8 @@ use crate::config::{
     forget_codex_hooks, read_json, read_toml, set_claude_skill, set_codex_plugin, set_codex_skill,
     write_json, write_toml,
 };
-use crate::{Env, Plugin, Provider, Skill, SkillInstall};
+use crate::discover::add_lock_entry;
+use crate::{AvailablePlugin, Env, Plugin, Provider, Skill, SkillInstall};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
@@ -21,6 +22,10 @@ pub enum Action {
     Symlink {
         link: PathBuf,
         target: PathBuf,
+    },
+    Rename {
+        from: PathBuf,
+        to: PathBuf,
     },
     SetClaudeSkill {
         title: String,
@@ -39,6 +44,10 @@ pub enum Action {
     },
     ForgetLock {
         name: String,
+    },
+    AddLock {
+        name: String,
+        entry: Value,
     },
     Run {
         provider: Provider,
@@ -89,8 +98,12 @@ impl Action {
                 "Remove hook trust entries for {id} from {}",
                 show(&env.codex_config())
             ),
+            Action::Rename { to, .. } => format!("Move the download to {}", show(to)),
             Action::ForgetLock { name } => {
                 format!("Remove {name} from {}", show(&env.skill_lock()))
+            }
+            Action::AddLock { name, .. } => {
+                format!("Record {name} in {}", show(&env.skill_lock()))
             }
             Action::Run { provider, args } => {
                 format!("Run `{} {}`", provider.cli(), args.join(" "))
@@ -114,6 +127,10 @@ fn run(env: &Env, action: &Action) -> Result<()> {
             fs::create_dir_all(link.parent().context("link has no parent directory")?)?;
             symlink(target, link)
         }
+        Action::Rename { from, to } => {
+            fs::create_dir_all(to.parent().context("target has no parent directory")?)?;
+            Ok(fs::rename(from, to)?)
+        }
         Action::SetClaudeSkill { title, enabled } => edit_json(&env.claude_settings(), |s| {
             set_claude_skill(s, title, *enabled)
         }),
@@ -133,6 +150,9 @@ fn run(env: &Env, action: &Action) -> Result<()> {
             }
             Ok(())
         }),
+        Action::AddLock { name, entry } => {
+            edit_json(&env.skill_lock(), |lock| add_lock_entry(lock, name, entry))
+        }
         Action::Run { provider, args } => env.run(provider.cli(), args).map(drop),
     }
 }
@@ -221,7 +241,7 @@ pub fn toggle_skill(env: &Env, skill: &Skill, provider: Provider, enabled: bool)
 }
 
 /// Relative like `npx skills` makes it, unless `$CLAUDE_CONFIG_DIR` moved Claude's directory.
-fn claude_link_target(env: &Env, shared: &Path, name: &str) -> PathBuf {
+pub(crate) fn claude_link_target(env: &Env, shared: &Path, name: &str) -> PathBuf {
     if env.claude_dir == env.home.join(".claude") && shared == env.agents_skills().join(name) {
         Path::new("../../.agents/skills").join(name)
     } else {
@@ -296,6 +316,26 @@ pub fn toggle_plugin(plugin: &Plugin, provider: Provider, enabled: bool) -> Vec<
             enabled,
         },
     }]
+}
+
+/// Installs a marketplace plugin through each chosen provider's tool, where it is offered and
+/// not installed yet.
+pub fn install_plugin(plugin: &AvailablePlugin, providers: &[Provider]) -> Vec<Action> {
+    providers
+        .iter()
+        .filter(|p| plugin.providers.get(p) == Some(&false))
+        .map(|&provider| {
+            let verb = match provider {
+                Provider::Claude => "install",
+                Provider::Codex => "add",
+            };
+            let mut args = vec!["plugin".into(), verb.into(), plugin.id.clone()];
+            if provider == Provider::Claude {
+                args.extend(["--scope".into(), "user".into()]);
+            }
+            Action::Run { provider, args }
+        })
+        .collect()
 }
 
 /// Uninstalls a plugin through each provider's tool, then removes what the tool leaves behind:

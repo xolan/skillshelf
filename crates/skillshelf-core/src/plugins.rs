@@ -138,6 +138,150 @@ fn parse_codex(env: &Env, json: &str) -> Result<Vec<(String, PluginInstall)>> {
         .collect())
 }
 
+/// A plugin a configured marketplace offers.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AvailablePlugin {
+    pub id: String,
+    pub name: String,
+    pub marketplace: String,
+    pub description: String,
+    /// Installs across Claude users, when the marketplace reports it.
+    pub install_count: Option<u64>,
+    /// Providers whose marketplaces offer it, and whether it is installed there.
+    pub providers: BTreeMap<Provider, bool>,
+}
+
+/// Every plugin the configured marketplaces offer, most installed first. A provider whose tool
+/// fails is reported in the error list and skipped.
+pub fn available_plugins(env: &Env) -> (Vec<AvailablePlugin>, Vec<String>) {
+    let mut plugins: BTreeMap<String, AvailablePlugin> = BTreeMap::new();
+    let mut errors = Vec::new();
+    let args: Vec<String> = ["plugin", "list", "--available", "--json"]
+        .map(String::from)
+        .into();
+    for provider in Provider::ALL {
+        let listed = env
+            .run(provider.cli(), &args)
+            .and_then(|json| match provider {
+                Provider::Claude => parse_claude_available(&json),
+                Provider::Codex => parse_codex_available(&json),
+            });
+        match listed {
+            Ok(listed) => {
+                for (offer, installed) in listed {
+                    let plugin = plugins
+                        .entry(offer.id.clone())
+                        .or_insert_with(|| offer.clone());
+                    if plugin.description.is_empty() {
+                        plugin.description = offer.description;
+                    }
+                    plugin.install_count = plugin.install_count.or(offer.install_count);
+                    plugin.providers.insert(provider, installed);
+                }
+            }
+            Err(e) => errors.push(format!("{}: {e:#}", provider.label())),
+        }
+    }
+    let mut plugins: Vec<_> = plugins.into_values().collect();
+    plugins.sort_by(|a, b| {
+        b.install_count
+            .cmp(&a.install_count)
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    (plugins, errors)
+}
+
+/// `claude plugin list --available --json`.
+fn parse_claude_available(json: &str) -> Result<Vec<(AvailablePlugin, bool)>> {
+    #[derive(Deserialize)]
+    struct Installed {
+        id: String,
+        scope: String,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Offer {
+        plugin_id: String,
+        name: String,
+        marketplace_name: String,
+        #[serde(default)]
+        description: String,
+        install_count: Option<u64>,
+    }
+    #[derive(Deserialize)]
+    struct List {
+        installed: Vec<Installed>,
+        available: Vec<Offer>,
+    }
+    let list: List =
+        serde_json::from_str(json).context("unexpected `claude plugin list` output")?;
+    let installed: Vec<String> = list
+        .installed
+        .into_iter()
+        .filter(|i| i.scope == "user")
+        .map(|i| i.id)
+        .collect();
+    Ok(list
+        .available
+        .into_iter()
+        .map(|o| {
+            let is_installed = installed.contains(&o.plugin_id);
+            let offer = AvailablePlugin {
+                id: o.plugin_id,
+                name: o.name,
+                marketplace: o.marketplace_name,
+                description: o.description,
+                install_count: o.install_count,
+                providers: BTreeMap::new(),
+            };
+            (offer, is_installed)
+        })
+        .collect())
+}
+
+/// `codex plugin list --available --json`. Descriptions come from the manifests of plugins
+/// whose marketplace is checked out locally.
+fn parse_codex_available(json: &str) -> Result<Vec<(AvailablePlugin, bool)>> {
+    #[derive(Deserialize)]
+    struct Source {
+        path: Option<PathBuf>,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Offer {
+        plugin_id: String,
+        name: String,
+        marketplace_name: String,
+        installed: bool,
+        source: Source,
+    }
+    #[derive(Deserialize)]
+    struct List {
+        available: Vec<Offer>,
+    }
+    let list: List = serde_json::from_str(json).context("unexpected `codex plugin list` output")?;
+    Ok(list
+        .available
+        .into_iter()
+        .map(|o| {
+            let offer = AvailablePlugin {
+                id: o.plugin_id,
+                name: o.name,
+                marketplace: o.marketplace_name,
+                description: o
+                    .source
+                    .path
+                    .as_deref()
+                    .map(description)
+                    .unwrap_or_default(),
+                install_count: None,
+                providers: BTreeMap::new(),
+            };
+            (offer, o.installed)
+        })
+        .collect())
+}
+
 /// `description` from the plugin manifest, whichever provider's manifest the plugin ships.
 fn description(dir: &Path) -> String {
     [".claude-plugin", ".codex-plugin"]
@@ -151,6 +295,20 @@ fn description(dir: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_available_lists() {
+        let claude = r#"{"installed":[{"id":"a@m","scope":"user"},{"id":"b@m","scope":"project"}],
+            "available":[{"pluginId":"a@m","name":"a","marketplaceName":"m","description":"A.","installCount":5},
+                         {"pluginId":"b@m","name":"b","marketplaceName":"m"}]}"#;
+        let listed = parse_claude_available(claude).unwrap();
+        assert_eq!((listed[0].0.install_count, listed[0].1), (Some(5), true));
+        assert_eq!((listed[1].0.description.as_str(), listed[1].1), ("", false));
+        let codex = r#"{"installed":[],"available":[{"pluginId":"r@n","name":"r","marketplaceName":"n",
+            "installed":true,"enabled":true,"source":{"source":"remote","id":"x"}}]}"#;
+        let listed = parse_codex_available(codex).unwrap();
+        assert_eq!((listed[0].0.id.as_str(), listed[0].1), ("r@n", true));
+    }
 
     #[test]
     fn parses_claude_list_and_skips_project_scope() {
