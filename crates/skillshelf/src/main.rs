@@ -14,6 +14,10 @@ fn main() {
         .with_assets(assets::Assets)
         .run(|cx| {
             gpui_kit::init(cx);
+            let fonts = assets::FONTS.iter().map(|f| (*f).into()).collect();
+            if let Err(e) = cx.text_system().add_fonts(fonts) {
+                eprintln!("skillshelf: could not load the embedded fonts: {e:#}");
+            }
             shelf::bind_keys(cx);
             cx.bind_keys([KeyBinding::new("ctrl-q", Quit, None)]);
             cx.on_action(|_: &Quit, cx| cx.quit());

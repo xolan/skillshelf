@@ -9,6 +9,7 @@ use anyhow::{Context, Result, bail, ensure};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::config::read_json;
 use crate::ops::claude_link_target;
 use crate::skills::frontmatter;
 use crate::{Action, Env, Provider};
@@ -87,32 +88,7 @@ impl FetchedSkill {
 
 /// Downloads `skill_id` from the GitHub repository `source` into a staging directory.
 pub fn fetch_skill(env: &Env, source: &str, skill_id: &str) -> Result<FetchedSkill> {
-    ensure!(
-        source.split('/').count() == 2
-            && source.split('/').all(|part| {
-                !part.is_empty()
-                    && !part.starts_with('.')
-                    && part
-                        .chars()
-                        .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
-            }),
-        "not a GitHub repository: {source}"
-    );
-    let commit = github(&format!(
-        "https://api.github.com/repos/{source}/commits/HEAD"
-    ))
-    .header("Accept", "application/vnd.github.sha")
-    .call()
-    .with_context(|| format!("could not reach github.com/{source}"))?
-    .body_mut()
-    .read_to_string()?
-    .trim()
-    .to_owned();
-    ensure!(
-        commit.chars().all(|c| c.is_ascii_hexdigit()),
-        "unexpected commit id from GitHub"
-    );
-
+    let commit = head_commit(source)?;
     let tree: Tree = serde_json::from_str(
         &github(&format!(
             "https://api.github.com/repos/{source}/git/trees/{commit}?recursive=1"
@@ -137,7 +113,19 @@ pub fn fetch_skill(env: &Env, source: &str, skill_id: &str) -> Result<FetchedSki
             .map(|e| e.sha.clone())
             .context("skill folder missing from the GitHub tree")?
     };
+    download(env, source, &commit, &folder, folder_hash, skill_id)
+}
 
+/// Extracts `folder` of `source` at `commit` into a staging directory. The skill is named by its
+/// frontmatter, else `fallback_name`.
+fn download(
+    env: &Env,
+    source: &str,
+    commit: &str,
+    folder: &str,
+    folder_hash: String,
+    fallback_name: &str,
+) -> Result<FetchedSkill> {
     let dir = staging_root(env).join(unique());
     fs::create_dir_all(&dir)?;
     let archive = github(&format!(
@@ -149,7 +137,7 @@ pub fn fetch_skill(env: &Env, source: &str, skill_id: &str) -> Result<FetchedSki
     .into_with_config()
     .limit(MAX_ARCHIVE)
     .reader();
-    let files = match extract(archive, &folder, &dir) {
+    let files = match extract(archive, folder, &dir) {
         Ok(files) => files,
         Err(e) => {
             let _ = fs::remove_dir_all(&dir);
@@ -161,7 +149,7 @@ pub fn fetch_skill(env: &Env, source: &str, skill_id: &str) -> Result<FetchedSki
     let name = frontmatter(&skill_md)
         .name
         .filter(|n| valid_name(n))
-        .unwrap_or_else(|| skill_id.to_owned());
+        .unwrap_or_else(|| fallback_name.to_owned());
     ensure!(valid_name(&name), "unsafe skill name: {name}");
     let skill_path = if folder.is_empty() {
         "SKILL.md".to_owned()
@@ -234,9 +222,101 @@ pub fn install_skill(
     Ok(actions)
 }
 
+/// A newer version of an installed skill on GitHub.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SkillUpdate {
+    /// Directory name of the installed skill.
+    pub name: String,
+    pub source: String,
+    /// The skill's folder in the repository, `""` for the root.
+    pub folder: String,
+    /// Git tree hash of the folder on GitHub now.
+    pub folder_hash: String,
+}
+
+/// Compares the folder hash the lock file recorded at install with the folder on GitHub now.
+/// `None` when they match, or the skill was not installed from GitHub.
+pub fn check_skill_update(env: &Env, name: &str) -> Result<Option<SkillUpdate>> {
+    let Some((source, folder, installed)) = locked_skill(&read_json(&env.skill_lock())?, name)
+    else {
+        return Ok(None);
+    };
+    let folder_hash = tree_hash(&source, "HEAD", &folder)?;
+    Ok((folder_hash != installed).then(|| SkillUpdate {
+        name: name.to_owned(),
+        source,
+        folder,
+        folder_hash,
+    }))
+}
+
+/// `(source, folder, skillFolderHash)` of a skill the lock file says came from GitHub.
+fn locked_skill(lock: &Value, name: &str) -> Option<(String, String, String)> {
+    let entry = &lock["skills"][name];
+    if entry["sourceType"] != "github" {
+        return None;
+    }
+    let source = entry["source"].as_str()?;
+    let path = entry["skillPath"].as_str()?;
+    let folder = path.strip_suffix("SKILL.md")?.trim_end_matches('/');
+    let hash = entry["skillFolderHash"]
+        .as_str()
+        .filter(|h| !h.is_empty())?;
+    Some((source.to_owned(), folder.to_owned(), hash.to_owned()))
+}
+
+/// Downloads the newer version of an installed skill into a staging directory.
+pub fn fetch_update(env: &Env, update: &SkillUpdate) -> Result<FetchedSkill> {
+    let commit = head_commit(&update.source)?;
+    let folder_hash = tree_hash(&update.source, &commit, &update.folder)?;
+    download(
+        env,
+        &update.source,
+        &commit,
+        &update.folder,
+        folder_hash,
+        &update.name,
+    )
+}
+
+/// Swaps the shared copy of skill `name` for a downloaded newer version and records the new
+/// folder hash in the lock file. The old copy is moved aside first and deleted last, so a failed
+/// step never leaves a half-deleted skill.
+pub fn update_skill(env: &Env, name: &str, skill: &FetchedSkill) -> Result<Vec<Action>> {
+    let target = env.agents_skills().join(name);
+    ensure!(
+        fs::symlink_metadata(&target).is_ok_and(|m| m.is_dir()),
+        "{} is not a folder skillshelf can replace",
+        env.tilde(&target)
+    );
+    let mut entry = read_json(&env.skill_lock())?["skills"][name].clone();
+    ensure!(entry.is_object(), "{name} is not in the skill lock");
+    entry["skillPath"] = skill.skill_path.clone().into();
+    entry["skillFolderHash"] = skill.folder_hash.clone().into();
+    entry["updatedAt"] = humantime::format_rfc3339_millis(SystemTime::now())
+        .to_string()
+        .into();
+    let old = staging_root(env).join(format!("{}-old", unique()));
+    Ok(vec![
+        Action::Rename {
+            from: target.clone(),
+            to: old.clone(),
+        },
+        Action::Rename {
+            from: skill.dir.clone(),
+            to: target,
+        },
+        Action::AddLock {
+            name: name.to_owned(),
+            entry,
+        },
+        Action::Remove(old),
+    ])
+}
+
 /// Downloads wait here: next to `~/.agents/skills`, so installing is a rename, but outside it,
 /// so Codex never loads a skill that is only being previewed.
-fn staging_root(env: &Env) -> PathBuf {
+pub(crate) fn staging_root(env: &Env) -> PathBuf {
     env.home.join(".agents/.skillshelf-staging")
 }
 
@@ -374,6 +454,65 @@ fn valid_name(name: &str) -> bool {
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+}
+
+/// Refuses anything but `owner/repo`, since it goes into GitHub URLs.
+fn check_source(source: &str) -> Result<()> {
+    ensure!(
+        source.split('/').count() == 2 && source.split('/').all(valid_name),
+        "not a GitHub repository: {source}"
+    );
+    Ok(())
+}
+
+/// The commit `HEAD` of a GitHub repository points to.
+fn head_commit(source: &str) -> Result<String> {
+    check_source(source)?;
+    let commit = github(&format!(
+        "https://api.github.com/repos/{source}/commits/HEAD"
+    ))
+    .header("Accept", "application/vnd.github.sha")
+    .call()
+    .with_context(|| format!("could not reach github.com/{source}"))?
+    .body_mut()
+    .read_to_string()?
+    .trim()
+    .to_owned();
+    ensure!(
+        commit.chars().all(|c| c.is_ascii_hexdigit()),
+        "unexpected commit id from GitHub"
+    );
+    Ok(commit)
+}
+
+/// Git tree hash of `folder` (`""` for the root) at `rev`, one small API call.
+fn tree_hash(source: &str, rev: &str, folder: &str) -> Result<String> {
+    #[derive(Deserialize)]
+    struct Tree {
+        sha: String,
+    }
+    check_source(source)?;
+    ensure!(
+        folder.is_empty()
+            || folder
+                .split('/')
+                .all(|p| !p.is_empty() && p != "." && p != ".." && !p.contains(['?', '#', '%'])),
+        "unsafe skill folder: {folder}"
+    );
+    let rev = if folder.is_empty() {
+        rev.to_owned()
+    } else {
+        format!("{rev}:{folder}")
+    };
+    let tree: Tree = github(&format!(
+        "https://api.github.com/repos/{source}/git/trees/{rev}"
+    ))
+    .call()
+    .with_context(|| format!("could not read {folder} in github.com/{source}"))?
+    .body_mut()
+    .read_json()
+    .context("unexpected GitHub tree response")?;
+    Ok(tree.sha)
 }
 
 fn github(url: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
@@ -558,6 +697,109 @@ mod tests {
         let mut empty = json!({});
         add_lock_entry(&mut empty, "b", &json!({})).unwrap();
         assert_eq!(empty, json!({"version": 3, "skills": {"b": {}}}));
+    }
+
+    #[test]
+    fn reads_github_skills_from_the_lock() {
+        let entry = |path: &str| json!({"source": "o/r", "sourceType": "github", "skillPath": path, "skillFolderHash": "h"});
+        let lock = json!({"skills": {
+            "nested": entry("skills/a/SKILL.md"),
+            "root": entry("SKILL.md"),
+            "local": {"source": "/x", "sourceType": "local", "skillPath": "SKILL.md", "skillFolderHash": "h"},
+            "no-hash": {"source": "o/r", "sourceType": "github", "skillPath": "SKILL.md", "skillFolderHash": ""},
+        }});
+        let got = |name| locked_skill(&lock, name);
+        let expect = |folder: &str| Some(("o/r".into(), folder.into(), "h".into()));
+        assert_eq!(got("nested"), expect("skills/a"));
+        assert_eq!(got("root"), expect(""));
+        assert_eq!(got("local"), None);
+        assert_eq!(got("no-hash"), None);
+        assert_eq!(got("missing"), None);
+    }
+
+    #[test]
+    fn update_swaps_the_shared_copy() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::at(home.path());
+        let target = env.agents_skills().join("s");
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join("SKILL.md"), "old").unwrap();
+        fs::write(target.join("gone.md"), "x").unwrap();
+        fs::write(
+            env.skill_lock(),
+            r#"{"version":3,"skills":{"s":{"source":"o/r","sourceType":"github","skillPath":"s/SKILL.md","skillFolderHash":"old","installedAt":"then"}}}"#,
+        )
+        .unwrap();
+        fs::create_dir_all(env.claude_skills()).unwrap();
+        std::os::unix::fs::symlink("../../.agents/skills/s", env.claude_skills().join("s"))
+            .unwrap();
+        let dir = staging_root(&env).join("new");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("SKILL.md"), "new").unwrap();
+        let fetched = FetchedSkill {
+            name: "renamed".into(),
+            source: "o/r".into(),
+            dir,
+            skill_path: "s/SKILL.md".into(),
+            folder_hash: "new".into(),
+            skill_md: "new".into(),
+            files: vec!["SKILL.md".into()],
+        };
+
+        let actions = update_skill(&env, "s", &fetched).unwrap();
+        crate::execute(&env, &actions).unwrap();
+        assert_eq!(fs::read_to_string(target.join("SKILL.md")).unwrap(), "new");
+        assert!(!target.join("gone.md").exists());
+        assert_eq!(
+            fs::read_to_string(env.claude_skills().join("s/SKILL.md")).unwrap(),
+            "new"
+        );
+        assert_eq!(fs::read_dir(staging_root(&env)).unwrap().count(), 0);
+        let entry = &read_json(&env.skill_lock()).unwrap()["skills"]["s"];
+        assert_eq!(entry["skillFolderHash"], "new");
+        assert_eq!(entry["installedAt"], "then");
+        assert_ne!(entry["updatedAt"], Value::Null);
+    }
+
+    #[test]
+    fn update_never_replaces_a_link() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::at(home.path());
+        let dotfiles = home.path().join("dotfiles/s");
+        fs::create_dir_all(&dotfiles).unwrap();
+        fs::create_dir_all(env.agents_skills()).unwrap();
+        std::os::unix::fs::symlink(&dotfiles, env.agents_skills().join("s")).unwrap();
+        fs::write(env.skill_lock(), r#"{"skills":{"s":{}}}"#).unwrap();
+        let fetched = FetchedSkill {
+            name: "s".into(),
+            source: "o/r".into(),
+            dir: staging_root(&env).join("new"),
+            skill_path: "SKILL.md".into(),
+            folder_hash: "new".into(),
+            skill_md: String::new(),
+            files: Vec::new(),
+        };
+        assert!(update_skill(&env, "s", &fetched).is_err());
+    }
+
+    /// Finds an outdated skill on GitHub and downloads its update into a throwaway home.
+    #[test]
+    #[ignore = "uses the network"]
+    fn check_and_fetch_update() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::at(home.path());
+        fs::create_dir_all(home.path().join(".agents")).unwrap();
+        fs::write(
+            env.skill_lock(),
+            r#"{"skills":{"find-skills":{"source":"vercel-labs/skills","sourceType":"github","skillPath":"skills/find-skills/SKILL.md","skillFolderHash":"0000"}}}"#,
+        )
+        .unwrap();
+        let update = check_skill_update(&env, "find-skills").unwrap().unwrap();
+        assert_eq!(update.folder, "skills/find-skills");
+        assert_eq!(update.folder_hash.len(), 40);
+        let fetched = fetch_update(&env, &update).unwrap();
+        assert_eq!(fetched.folder_hash, update.folder_hash);
+        assert!(fetched.files.contains(&"SKILL.md".to_owned()));
     }
 
     /// Searches skills.sh and installs a real skill into a throwaway home.

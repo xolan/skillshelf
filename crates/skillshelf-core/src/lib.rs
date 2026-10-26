@@ -8,7 +8,8 @@ mod plugins;
 mod skills;
 
 pub use discover::{
-    FetchedSkill, SkillHit, clean_staging, fetch_skill, install_skill, search_skills,
+    FetchedSkill, SkillHit, SkillUpdate, check_skill_update, clean_staging, fetch_skill,
+    fetch_update, install_skill, search_skills, update_skill,
 };
 pub use env::Env;
 pub use ops::{

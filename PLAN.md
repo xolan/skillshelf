@@ -87,6 +87,17 @@ The planner is pure, so it is unit-tested against fixture homes.
 4. Preview, confirm, rename into `~/.agents/skills/<name>`, add lock entry.
 5. Per selected provider: Claude → symlink. Codex → nothing; if Codex not selected, add a disable entry.
 
+### Update skill
+1. When a skill with a GitHub lock entry is selected, read its folder's tree hash with one call
+   (`GET /repos/<source>/git/trees/HEAD:<folder>`) and compare it with `skillFolderHash`.
+   Checked once per skill per session (Reload forgets the results), so the 60 requests/hour
+   GitHub allows without a token go far.
+2. "Update…" downloads the folder at the current commit into staging like an install, and lists
+   its files (scripts flagged) in the confirm dialog.
+3. Move the installed folder aside into staging, rename the download into place, update the lock
+   entry (hash, `updatedAt`), delete the old copy. Links and Codex/Claude settings keep pointing
+   at the same path.
+
 ### Uninstall skill
 Remove the Claude symlink (only if it points into the canonical dir), `skillOverrides` entry,
 `[[skills.config]]` entries, the canonical dir, and the lock entry. Unmanaged skills (real dirs or
@@ -120,7 +131,7 @@ Plugins: `enabledPlugins` (Claude), `[plugins."id"] enabled` (Codex). No files m
 
 ## Milestones
 
-Status (2026-10-26): 0–4 done; 5 is next.
+Status (2026-10-26): 0–4 done; 5 done except the app icon and releasing 0.1.0 (the version bump).
 
 0. Spike: sandbox-HOME diffs of `npx skills add/remove -g`, `claude plugin install/uninstall`,
    `codex plugin add/remove` → fixtures and leftover lists. GPUI hello window builds. Release workflow.
@@ -131,5 +142,5 @@ Status (2026-10-26): 0–4 done; 5 is next.
 5. Polish: app icon, embedded font, command palette (`ctrl-k`), skill updates, keyboard
    navigation in lists. Release 0.1.0.
 
-Later: macOS/Windows (Windows: directory junctions instead of symlinks), project scope, updates,
-more providers.
+Later: macOS/Windows (Windows: directory junctions instead of symlinks), project scope, plugin
+updates, more providers.

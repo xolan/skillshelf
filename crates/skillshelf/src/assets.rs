@@ -1,8 +1,19 @@
-//! Default component icons plus the extra Lucide icons skillshelf uses.
+//! Default component icons plus the extra Lucide icons skillshelf uses, and the embedded fonts.
 
 use std::borrow::Cow;
 
 use gpui_kit::{AssetSource, Result, SharedString};
+
+/// Geist and Geist Mono, under the SIL Open Font License (`fonts/OFL.txt`).
+pub const FONTS: &[&[u8]] = &[
+    include_bytes!("../fonts/Geist-Regular.ttf"),
+    include_bytes!("../fonts/Geist-Italic.ttf"),
+    include_bytes!("../fonts/Geist-Medium.ttf"),
+    include_bytes!("../fonts/Geist-SemiBold.ttf"),
+    include_bytes!("../fonts/Geist-Bold.ttf"),
+    include_bytes!("../fonts/GeistMono-Regular.ttf"),
+    include_bytes!("../fonts/GeistMono-Bold.ttf"),
+];
 
 gpui_kit::assets::icon_assets!(ExtraIcons, [LibraryBig, Puzzle, Store, Trash, Download]);
 

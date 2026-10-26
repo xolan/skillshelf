@@ -225,8 +225,13 @@ fn base16(yaml: &str) -> Result<String> {
     .into_iter()
     .map(|(key, color)| (key.to_owned(), color.into()))
     .collect();
-    let theme =
-        json!({ "name": name, "mode": if dark { "dark" } else { "light" }, "colors": colors });
+    let theme = json!({
+        "name": name,
+        "mode": if dark { "dark" } else { "light" },
+        "font.family": "Geist",
+        "mono_font.family": "Geist Mono",
+        "colors": colors,
+    });
     Ok(json!({ "name": name, "themes": [theme] }).to_string())
 }
 
