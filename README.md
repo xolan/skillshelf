@@ -23,12 +23,13 @@ Runs on Linux and Windows. There is no macOS build.
 - Windows: Windows 10 or 11, x64 or Arm64.
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`), [Codex
   CLI](https://github.com/openai/codex) (`codex`), or both, on your `PATH`. skillshelf runs them to
-  install, update and remove plugins. Turning skills on and off edits their config files directly.
+  install and remove plugins. Turning skills on and off edits their config files directly.
 - Optional: the [GitHub CLI](https://cli.github.com) (`gh`), signed in with `gh auth login`.
   skillshelf asks it for a token when it downloads skills from GitHub. Without it, pick anonymous
   access (60 requests an hour) or paste a token under Settings → GitHub access.
 
-skillshelf talks to `skills.sh`, `api.github.com` and `codeload.github.com`.
+skillshelf talks to `skills.sh`, `api.github.com`, `codeload.github.com` and
+`raw.githubusercontent.com`.
 
 ## Install
 
@@ -39,16 +40,20 @@ Each release holds a Linux tarball and a Windows zip for x86_64 and aarch64, eac
 
 Download `skillshelf-<version>-<arch>-unknown-linux-gnu.tar.gz` and its `.sha256` from
 [Releases](https://github.com/xolan/skillshelf/releases), where `<arch>` is `x86_64` or `aarch64`
-(`uname -m` tells you which). Then:
+(`uname -m` tells you which). In the folder you downloaded them to, set `version` to the release
+you picked and run:
 
 ```bash
-sha256sum -c skillshelf-*-unknown-linux-gnu.tar.gz.sha256
-tar -xzf skillshelf-*-unknown-linux-gnu.tar.gz
-cd skillshelf-*/
-install -Dm755 skillshelf ~/.local/bin/skillshelf
-install -Dm644 skillshelf.desktop ~/.local/share/applications/skillshelf.desktop
-install -Dm644 skillshelf.svg ~/.local/share/icons/hicolor/scalable/apps/skillshelf.svg
+version=1.0.0
+name=skillshelf-$version-$(uname -m)-unknown-linux-gnu
+sha256sum -c "$name.tar.gz.sha256" &&
+  tar -xzf "$name.tar.gz" &&
+  install -Dm755 "$name/skillshelf" ~/.local/bin/skillshelf &&
+  install -Dm644 "$name/skillshelf.desktop" ~/.local/share/applications/skillshelf.desktop &&
+  install -Dm644 "$name/skillshelf.svg" ~/.local/share/icons/hicolor/scalable/apps/skillshelf.svg
 ```
+
+If the checksum doesn't match, nothing is installed.
 
 The desktop entry starts `skillshelf` from your `PATH`. If it doesn't show in your app menu, or
 won't start from there, check that `~/.local/bin` is on the `PATH` of your desktop session, not
@@ -69,8 +74,8 @@ installs, and links skills into Claude Code with directory junctions, as `npx sk
 
 ### First run
 
-Open Settings and turn on the agents you want skillshelf to manage. Until you do, it changes
-nothing.
+Open Settings and turn on the agents you want skillshelf to manage. Until you do, it leaves
+their skills, plugins and config files alone.
 
 ## Where it keeps its files
 
@@ -80,15 +85,19 @@ it), or `%APPDATA%\skillshelf\` on Windows:
 | File | What it holds |
 | --- | --- |
 | `settings.json` | Theme, managed agents, GitHub access choice and profiles |
-| `github-token` | The token you saved under Settings, in plain text. On Linux only you can read the file (mode `0600`); on Windows it gets the permissions of your `%APPDATA%` folder. |
+| `github-token` | The token you saved under Settings, in plain text. On Linux the file has mode `0600`, so only you and root can read it; on Windows it gets the permissions of your `%APPDATA%` folder. |
 | `themes/` | Extra Base16 themes you add |
 
 It also changes files that belong to the agents and to `npx skills`:
 
 - `~/.agents/skills/` and `~/.agents/.skill-lock.json`, for skills it installs, updates or removes.
-- `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR`) and `~/.codex/config.toml` (or
-  `$CODEX_HOME`), to turn skills and plugins on and off.
-- `~/.claude/skills/`, where it links shared skills for Claude Code.
+- `~/.claude/settings.json` and `~/.codex/config.toml`, to turn skills and plugins on and off.
+- `~/.claude/skills/` and `~/.codex/skills/`, where it links shared skills for Claude Code and
+  removes skills you uninstall.
+- The agents' plugin folders under `~/.claude/` and `~/.codex/`, which it cleans up after the
+  agent's own CLI uninstalls a plugin.
+
+`$CLAUDE_CONFIG_DIR` and `$CODEX_HOME` move `~/.claude` and `~/.codex`, as they do for the agents.
 
 Downloads wait in `~/.agents/.skillshelf-staging/` until you install them, and skillshelf clears
 that folder each time it starts.
@@ -101,7 +110,7 @@ On Linux:
 rm ~/.local/bin/skillshelf \
   ~/.local/share/applications/skillshelf.desktop \
   ~/.local/share/icons/hicolor/scalable/apps/skillshelf.svg
-rm -r ~/.config/skillshelf          # settings, profiles and saved token
+rm -rf "${XDG_CONFIG_HOME:-$HOME/.config}/skillshelf"   # settings, profiles and saved token
 rm -rf ~/.agents/.skillshelf-staging
 ```
 
@@ -117,8 +126,8 @@ files. Remove them in skillshelf first if you don't want them.
 | --- | --- |
 | `Ctrl+K` | Command palette: go to a page, reload, switch profile, pick a theme |
 | `Up` / `Down` | Move through the list, also from the filter field |
-| `Enter` | Install the selected search result, or update the selected skill |
-| `Delete` | Uninstall the selected skill or plugin |
+| `Enter` | Install the selected search result, update the selected skill, or switch to the selected profile |
+| `Delete` | Uninstall the selected skill or plugin, unless the filter field has focus |
 | `Ctrl+F` | Focus the filter |
 | `Ctrl+R` | Reload |
 | `Ctrl+Q` | Quit |
@@ -126,8 +135,8 @@ files. Remove them in skillshelf first if you don't want them.
 ## Themes
 
 skillshelf ships its own light and dark themes and a set of Base16 schemes. Drop more Base16
-scheme files (`*.yaml`) into `~/.config/skillshelf/themes/` (`%APPDATA%\skillshelf\themes\` on
-Windows) and pick them under Settings → Theme, or from the command palette (`Ctrl+K`).
+scheme files (`*.yaml`) into the `themes` folder in skillshelf's config folder (see
+[Where it keeps its files](#where-it-keeps-its-files)) and pick them under Settings → Theme, or from the command palette (`Ctrl+K`).
 
 The UI font is [Geist](https://github.com/vercel/geist-font), embedded under the SIL Open Font
 License (`OFL-Geist.txt` in the release archive).
@@ -176,7 +185,7 @@ mise run run
 | `mise run icon` | Render the Windows app icon from `assets/brand/skillshelf.svg` |
 
 A few tests call skills.sh and GitHub, so they are skipped by default. Run them with
-`cargo test -p skillshelf-core -- --ignored`.
+`mise exec -- cargo test -p skillshelf-core --locked -- --ignored`.
 
 ## Contributing
 
