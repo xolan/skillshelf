@@ -71,8 +71,11 @@ sha256sum -c PKGBUILD.sha256 && makepkg -si
 
 This builds a `skillshelf-bin` package from the release's prebuilt binary, checks the tarball
 against the checksum in the `PKGBUILD`, and installs it with pacman, which pulls in the libraries it
-needs. If you have no Vulkan driver yet, pacman asks you to pick one (`vulkan-radeon`,
-`vulkan-intel` or `nvidia-utils`, for your GPU).
+needs. If you have no Vulkan driver yet, pacman asks you to pick the one for your GPU, such as
+`vulkan-radeon`, `vulkan-intel` or `nvidia-utils`.
+
+If you installed from the tarball before, remove that copy first (the first `rm` command under
+[Uninstall](#uninstall)), or the one in `~/.local/bin` keeps starting instead.
 
 ### Windows
 
@@ -121,7 +124,7 @@ that folder each time it starts.
 ## Uninstall
 
 On Linux, if you installed the Arch package, run `sudo pacman -R skillshelf-bin` in place of the
-first `rm`:
+first `rm` command, which removes the binary, desktop entry and icon:
 
 ```bash
 rm ~/.local/bin/skillshelf \
