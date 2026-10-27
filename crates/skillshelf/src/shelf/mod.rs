@@ -135,6 +135,8 @@ pub struct Shelf {
     load_error: Option<SharedString>,
     loading: bool,
     busy: bool,
+    /// The profile whose steps are running, to make active once they succeed.
+    switching_to: Option<usize>,
     selected: Option<Selection>,
     /// SKILL.md of the selected skill or download, without its frontmatter.
     skill_md: SharedString,
@@ -208,6 +210,7 @@ impl Shelf {
             load_error: None,
             loading: false,
             busy: false,
+            switching_to: None,
             selected: None,
             skill_md: SharedString::default(),
             filter,
@@ -337,9 +340,14 @@ impl Shelf {
                 .await;
             this.update_in(cx, |this, window, cx| {
                 this.busy = false;
+                // A switch takes effect once its steps ran, so a failed one leaves the
+                // profile's choices as they were, to try again.
+                let switching_to = this.switching_to.take();
                 match result {
                     Ok(()) => {
-                        if let Some(done) = done {
+                        // `activate` says so itself when the switch can't be saved.
+                        let activated = switching_to.is_none_or(|ix| this.activate(ix, window, cx));
+                        if activated && let Some(done) = done {
                             window.push_notification(Notification::success(done), cx);
                         }
                     }

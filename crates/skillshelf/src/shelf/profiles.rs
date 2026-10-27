@@ -87,7 +87,7 @@ impl Shelf {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if ix == self.profiles.active || self.busy {
+        if ix == self.profiles.active || !self.settled() {
             return;
         }
         let Some(env) = self.env.clone() else {
@@ -135,17 +135,27 @@ impl Shelf {
                 .ok_text("Switch")
                 .on_ok(move |_, window, cx| {
                     shelf.update(cx, |shelf, cx| {
-                        if shelf.activate(ix, window, cx) {
-                            shelf.run(steps.clone(), Some(done.clone()), window, cx);
-                        }
+                        shelf.switching_to = Some(ix);
+                        shelf.run(steps.clone(), Some(done.clone()), window, cx);
                     });
                     true
                 })
         });
     }
 
+    /// Whether the lists match how things are now: read, and no steps or reload under way. Switching
+    /// and copying profiles work from these lists.
+    fn settled(&self) -> bool {
+        self.env.is_some() && !self.busy && !self.loading
+    }
+
     /// Makes a profile the active one, without changing any skill or plugin.
-    fn activate(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> bool {
+    pub(super) fn activate(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let agents_before = self.agents().to_vec();
         let mut profiles = self.profiles.clone();
         profiles.active = ix;
@@ -291,7 +301,7 @@ impl Shelf {
             .icon(Icon::new(Lucide::Layers))
             .label(self.profiles.active().name.clone())
             .tooltip("Profile")
-            .disabled(self.busy)
+            .disabled(!self.settled())
             .dropdown_menu(move |menu, _, _| {
                 let mut menu = menu.scrollable(true).max_h(px(420.));
                 for (ix, name) in names.iter().enumerate() {
@@ -332,7 +342,7 @@ impl Shelf {
                         .small()
                         .icon(IconName::Plus)
                         .label("New profile…")
-                        .disabled(self.busy)
+                        .disabled(!self.settled())
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.open_name_dialog(None, window, cx)
                         })),
@@ -361,7 +371,7 @@ impl Shelf {
                     Button::new(SharedString::from(format!("use-profile-{ix}")))
                         .small()
                         .label("Switch")
-                        .disabled(self.busy)
+                        .disabled(!self.settled())
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.switch_profile(ix, window, cx)
                         })),
@@ -389,7 +399,7 @@ impl Shelf {
         let switch = Button::new("switch-profile")
             .primary()
             .label(if active { "In use" } else { "Switch" })
-            .disabled(active || self.busy)
+            .disabled(active || !self.settled())
             .on_click(cx.listener(move |this, _, window, cx| this.switch_profile(ix, window, cx)));
         let note = if ix == 0 {
             "The default profile can't be renamed or removed."
@@ -486,7 +496,7 @@ impl Shelf {
         let mut skills = for_agents(self.scanned.clone(), &profile.agents);
         skills.retain(|s| !s.default);
         let mut plugins = plugins_for(&self.all_plugins, &profile.agents);
-        plugins.retain(|p| !p.is_default());
+        plugins.retain(|p| p.installs.values().any(|i| !i.default));
         let mut contents = vec![note(
             "Switching to this profile turns these on and off. Skills and plugins installed \
              later stay as they are.",
