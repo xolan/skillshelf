@@ -454,6 +454,8 @@ impl Shelf {
                     .tooltip("Uninstall… (Delete)")
                     .disabled(self.busy)
                     .on_click(cx.listener(move |this, _, window, cx| {
+                        // The row's click would focus the list, taking focus from the dialog.
+                        cx.stop_propagation();
                         this.select(Some(selection.clone()), cx);
                         this.confirm_uninstall(window, cx);
                     })),
