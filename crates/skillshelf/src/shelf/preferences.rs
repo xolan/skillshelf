@@ -168,7 +168,9 @@ impl Shelf {
             .map(|env| env.tilde(&settings::config_dir().join("github-token")))
             .unwrap_or_default();
         let token_note = if self.has_token {
-            format!("A token is saved in {token_place}, readable only by you.")
+            format!(
+                "A token is saved in plain text in {token_place}, readable only by you and administrators."
+            )
         } else {
             "Use a fine-grained token with read-only access to public repositories.".to_owned()
         };
