@@ -24,6 +24,9 @@ pub struct Skill {
     /// Every place a provider reads this skill from. Codex can have two: the shared copy and
     /// one in `~/.codex/skills`.
     pub installs: Vec<SkillInstall>,
+    /// Ships with the agent (Codex's `~/.codex/skills/.system`): it cannot be removed or turned
+    /// off. Its name is `.system/<dir>`, so it never merges with a user skill of the same name.
+    pub default: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -122,7 +125,19 @@ pub fn scan_skills(env: &Env) -> Result<Vec<Skill>> {
         });
     }
 
-    Ok(skills.into_values().collect())
+    let mut skills: Vec<Skill> = skills.into_values().collect();
+    for (dir, path) in skill_dirs(&env.codex_skills().join(".system")) {
+        let mut skill = new_skill(&format!(".system/{dir}"), &path);
+        skill.default = true;
+        skill.installs.push(SkillInstall {
+            provider: Provider::Codex,
+            path,
+            shared: false,
+            enabled: true,
+        });
+        skills.push(skill);
+    }
+    Ok(skills)
 }
 
 /// Visible subdirectories (or links to them) that hold a SKILL.md, sorted by name.
@@ -153,6 +168,7 @@ fn new_skill(name: &str, dir: &Path) -> Skill {
         shared: None,
         source: None,
         installs: Vec::new(),
+        default: false,
     }
 }
 
@@ -254,7 +270,7 @@ mod tests {
             env.claude_skills().join("foreign"),
         );
         // Codex's own dir: a skill only there, a second copy of a shared one, and Codex's
-        // bundled skills, which are never listed.
+        // bundled skills, listed last as defaults.
         write_skill(&env.codex_skills().join("old"), "old");
         write_skill(&env.codex_skills().join("shared"), "shared");
         write_skill(&env.codex_skills().join(".system/bundled"), "bundled");
@@ -283,8 +299,11 @@ mod tests {
         let get = |n: &str| skills.iter().find(|s| s.name == n).unwrap();
         assert_eq!(
             skills.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(),
-            ["foreign", "local", "old", "shared"]
+            ["foreign", "local", "old", "shared", ".system/bundled"]
         );
+        let bundled = get(".system/bundled");
+        assert!(bundled.default && !get("old").default);
+        assert_eq!(bundled.title, "bundled");
 
         let shared = get("shared");
         assert_eq!(shared.source.as_deref(), Some("o/r"));

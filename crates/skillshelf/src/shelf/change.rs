@@ -279,6 +279,7 @@ mod tests {
                 install(Provider::Codex, shared),
                 install(Provider::Claude, env.claude_skills().join("s")),
             ],
+            default: false,
         };
         let change = Change::UninstallSkill(skill);
         let choices = change.choices(agents);
