@@ -299,7 +299,7 @@ impl Shelf {
             .ghost()
             .small()
             .icon(Icon::new(Lucide::Layers))
-            .label(self.profiles.active().name.clone())
+            .label(format!("Profile: {}", self.profiles.active().name))
             .tooltip("Profile")
             .disabled(!self.settled())
             .dropdown_menu(move |menu, _, _| {

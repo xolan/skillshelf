@@ -19,7 +19,6 @@ use gpui_kit::component::{
     command::CommandState,
     h_flex,
     input::{Input, InputEvent, InputState},
-    menu::{DropdownMenu, PopupMenuItem},
     notification::Notification,
     resizable::{ResizableState, h_resizable, resizable_panel},
     scroll::ScrollableElement,
@@ -35,9 +34,9 @@ use skillshelf_core::{
     SkillUpdate, clean_staging, execute, scan_plugins, scan_skills,
 };
 
+use crate::assets;
 use crate::profiles::Profiles;
 use crate::settings::{self, GitHubAccess};
-use crate::{assets, theme};
 
 actions!(
     shelf,
@@ -507,7 +506,6 @@ impl Shelf {
     }
 
     fn render_title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let active_theme = cx.theme().theme_name().clone();
         let working = self.loading || self.busy || self.fetching || self.loading_offers;
         TitleBar::new().child(
             h_flex()
@@ -528,35 +526,7 @@ impl Shelf {
                         .when(working, |this| {
                             this.child(Spinner::new().small().color(cx.theme().muted_foreground))
                         })
-                        .child(self.profile_menu(cx))
-                        .child(
-                            Button::new("reload")
-                                .ghost()
-                                .small()
-                                .icon(IconName::RefreshCw)
-                                .tooltip("Reload (Ctrl+R)")
-                                .on_click(cx.listener(|this, _, _, cx| this.reload_all(cx))),
-                        )
-                        .child(
-                            Button::new("theme")
-                                .ghost()
-                                .small()
-                                .icon(IconName::Palette)
-                                .tooltip("Theme")
-                                .dropdown_menu(move |menu, _, cx| {
-                                    let mut menu = menu.scrollable(true).max_h(px(420.));
-                                    for (name, _) in theme::names(cx) {
-                                        let checked = name == active_theme;
-                                        let pick = name.clone();
-                                        menu = menu.item(
-                                            PopupMenuItem::new(name)
-                                                .checked(checked)
-                                                .on_click(move |_, _, cx| theme::select(&pick, cx)),
-                                        );
-                                    }
-                                    menu
-                                }),
-                        ),
+                        .child(self.profile_menu(cx)),
                 ),
         )
     }
@@ -872,6 +842,14 @@ impl Render for Shelf {
                 "Could not read your setup",
                 error,
                 cx,
+            )
+            .child(
+                Button::new("retry")
+                    .small()
+                    .primary()
+                    .icon(IconName::RefreshCw)
+                    .label("Reload")
+                    .on_click(cx.listener(|this, _, _, cx| this.reload_all(cx))),
             )
             .into_any_element(),
             None => self.render_page(cx),
