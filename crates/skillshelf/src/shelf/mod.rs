@@ -45,7 +45,8 @@ actions!(
         OpenPalette,
         SelectPrev,
         SelectNext,
-        OpenSelected
+        OpenSelected,
+        UninstallSelected
     ]
 );
 
@@ -57,6 +58,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("up", SelectPrev, Some("Shelf")),
         KeyBinding::new("down", SelectNext, Some("Shelf")),
         KeyBinding::new("enter", OpenSelected, Some("Shelf")),
+        // Not in the filter field, where delete edits the text.
+        KeyBinding::new("delete", UninstallSelected, Some("Shelf")),
         // The filter field hands the arrows and enter to the list below it.
         KeyBinding::new("up", SelectPrev, Some("Shelf > Input")),
         KeyBinding::new("down", SelectNext, Some("Shelf > Input")),
@@ -244,8 +247,11 @@ impl Shelf {
                         .into_iter()
                         .filter_map(|p| Some((p, env.locate(p)?)))
                         .collect();
-                    let skills = installed::for_agents(scan_skills(&env)?, &agents);
-                    let (plugins, errors) = scan_plugins(&env, &agents);
+                    let mut skills = installed::for_agents(scan_skills(&env)?, &agents);
+                    let (mut plugins, errors) = scan_plugins(&env, &agents);
+                    // Defaults go last, under their own heading.
+                    skills.sort_by_key(|s| s.default);
+                    plugins.sort_by_key(|p| p.is_default());
                     anyhow::Ok((env, found, skills, plugins, errors))
                 })
                 .await;
@@ -779,7 +785,7 @@ impl Shelf {
         &self,
         title: String,
         subtitle: Option<String>,
-        action: Button,
+        action: impl Into<Option<Button>>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         h_flex()
@@ -803,7 +809,7 @@ impl Shelf {
                         )
                     }),
             )
-            .child(action.small())
+            .children(action.into().map(|a| a.small()))
     }
 }
 
@@ -829,6 +835,9 @@ impl Render for Shelf {
             )
             .on_action(cx.listener(|this, _: &SelectPrev, _, cx| this.move_selection(-1, cx)))
             .on_action(cx.listener(|this, _: &SelectNext, _, cx| this.move_selection(1, cx)))
+            .on_action(cx.listener(|this, _: &UninstallSelected, window, cx| {
+                this.confirm_uninstall(window, cx)
+            }))
             .on_action(
                 cx.listener(|this, _: &OpenSelected, window, cx| this.open_selected(window, cx)),
             )

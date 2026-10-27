@@ -23,6 +23,14 @@ pub struct PluginInstall {
     /// The plugin's files, when they are on disk.
     pub path: Option<PathBuf>,
     pub enabled: bool,
+    /// The provider installs it by default; it cannot be removed or turned off.
+    pub default: bool,
+}
+
+impl Plugin {
+    pub fn is_default(&self) -> bool {
+        self.installs.values().any(|i| i.default)
+    }
 }
 
 /// Installed user-scope plugins of the given providers. Each provider's tool is the source of
@@ -92,6 +100,7 @@ fn parse_claude(json: &str) -> Result<Vec<(String, PluginInstall)>> {
                     version: e.version,
                     path: e.install_path,
                     enabled: e.enabled,
+                    default: false,
                 },
             )
         })
@@ -110,6 +119,8 @@ fn parse_codex(env: &Env, json: &str) -> Result<Vec<(String, PluginInstall)>> {
         #[serde(default)]
         version: String,
         enabled: bool,
+        #[serde(default)]
+        install_policy: String,
     }
     #[derive(Deserialize)]
     struct List {
@@ -132,6 +143,7 @@ fn parse_codex(env: &Env, json: &str) -> Result<Vec<(String, PluginInstall)>> {
                     version: e.version,
                     path,
                     enabled: e.enabled,
+                    default: e.install_policy == "INSTALLED_BY_DEFAULT",
                 },
             )
         })
@@ -323,7 +335,8 @@ mod tests {
                 PluginInstall {
                     version: "1.0".into(),
                     path: Some("/x/a".into()),
-                    enabled: true
+                    enabled: true,
+                    default: false
                 }
             )]
         );
@@ -342,7 +355,7 @@ mod tests {
         .unwrap();
         let json = r#"{"installed":[
             {"pluginId":"a@m","name":"a","marketplaceName":"m","version":"1.2","installed":true,"enabled":false},
-            {"pluginId":"r@m","name":"r","marketplaceName":"m","version":"0.1","installed":true,"enabled":true}
+            {"pluginId":"r@m","name":"r","marketplaceName":"m","version":"0.1","installed":true,"enabled":true,"installPolicy":"INSTALLED_BY_DEFAULT"}
         ],"available":[]}"#;
         let listed = parse_codex(&env, json).unwrap();
         assert_eq!(
@@ -350,10 +363,12 @@ mod tests {
             PluginInstall {
                 version: "1.2".into(),
                 path: Some(dir.clone()),
-                enabled: false
+                enabled: false,
+                default: false
             }
         );
         assert_eq!(listed[1].1.path, None);
+        assert!(listed[1].1.default);
         assert_eq!(description(&dir), "Does a.");
     }
 }

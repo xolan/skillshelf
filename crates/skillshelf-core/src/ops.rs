@@ -659,6 +659,7 @@ mod tests {
             version: "1.0".into(),
             path,
             enabled: true,
+            default: false,
         };
         let plugin = Plugin {
             id: "p@m".into(),

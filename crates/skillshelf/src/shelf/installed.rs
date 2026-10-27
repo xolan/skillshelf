@@ -2,8 +2,8 @@
 
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::{
-    ActiveTheme, Disableable, Sizable, button::Button, button::ButtonVariants, h_flex,
-    scroll::ScrollableElement, spinner::Spinner, text::TextView, v_flex,
+    ActiveTheme, Disableable, Icon, Sizable, StyledExt, button::Button, button::ButtonVariants,
+    h_flex, scroll::ScrollableElement, spinner::Spinner, text::TextView, v_flex,
 };
 use gpui_kit::*;
 use skillshelf_core::{
@@ -11,7 +11,7 @@ use skillshelf_core::{
 };
 
 use super::change::{Change, open_change_dialog};
-use super::{SEARCH_DELAY, Selection, Shelf, divider, fact, list_body, matches, warning};
+use super::{SEARCH_DELAY, Selection, Shelf, cell, divider, fact, list_body, matches, warning};
 use crate::settings::GitHubAccess;
 
 /// The skills to list when skillshelf manages only `agents`: those an agent has, or Claude can
@@ -29,6 +29,35 @@ pub(super) fn for_agents(skills: Vec<Skill>, agents: &[Provider]) -> Vec<Skill> 
             listed.then_some(skill)
         })
         .collect()
+}
+
+/// Puts the "Default installs" heading on top of the first default row. It goes inside that row, so each
+/// row stays one child of the list and `scroll_to_item` keeps finding it.
+fn with_default_heading(rows: &mut [AnyElement], first: Option<usize>, cx: &mut Context<Shelf>) {
+    let Some(row) = first.and_then(|ix| rows.get_mut(ix)) else {
+        return;
+    };
+    let theme = cx.theme();
+    // A tinted band between rule lines, so it reads as a section break and not as another row.
+    let heading = h_flex()
+        .px_4()
+        .py_2()
+        .gap_2()
+        .bg(theme.primary.opacity(0.12))
+        .border_t_2()
+        .border_b_1()
+        .border_color(theme.primary.opacity(0.5))
+        .child(Icon::new(Lucide::Lock).small().text_color(theme.primary))
+        .child(div().font_semibold().child("Default installs"))
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .truncate()
+                .child("Come with the agent; cannot be removed or turned off"),
+        );
+    let taken = std::mem::replace(row, div().into_any_element());
+    *row = v_flex().child(heading).child(taken).into_any_element();
 }
 
 impl Shelf {
@@ -212,10 +241,21 @@ impl Shelf {
         self.run(steps, None, window, cx);
     }
 
-    fn confirm_uninstall(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn confirm_uninstall(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy {
+            return;
+        }
         let change = match &self.selected {
-            Some(Selection::Skill(name)) => self.skill(name).cloned().map(Change::UninstallSkill),
-            Some(Selection::Plugin(id)) => self.plugin(id).cloned().map(Change::UninstallPlugin),
+            Some(Selection::Skill(name)) => self
+                .skill(name)
+                .filter(|s| !s.default)
+                .cloned()
+                .map(Change::UninstallSkill),
+            Some(Selection::Plugin(id)) => self
+                .plugin(id)
+                .filter(|p| !p.is_default())
+                .cloned()
+                .map(Change::UninstallPlugin),
             _ => None,
         };
         if let Some(change) = change {
@@ -225,11 +265,13 @@ impl Shelf {
 
     pub(super) fn render_skills(&self, cx: &mut Context<Self>) -> AnyElement {
         let skills: Vec<_> = self.visible_skills(cx).collect();
-        let rows: Vec<_> = skills.into_iter().map(|s| self.skill_row(s, cx)).collect();
+        let first_default = skills.iter().position(|s| s.default);
+        let mut rows: Vec<_> = skills.into_iter().map(|s| self.skill_row(s, cx)).collect();
+        with_default_heading(&mut rows, first_default, cx);
         v_flex()
             .size_full()
             .child(self.page_header("Skills", Some(rows.len()), cx))
-            .child(self.column_header(&self.agent_columns(), cx))
+            .child(self.column_header(&self.installed_columns(), cx))
             .child(list_body("skill-list", rows, &self.list_scroll, cx))
             .into_any_element()
     }
@@ -242,7 +284,9 @@ impl Shelf {
             .iter()
             .copied()
             .filter(|&p| {
-                skill.enabled(p).is_some() || (p == Provider::Claude && skill.shared.is_some())
+                !skill.default
+                    && (skill.enabled(p).is_some()
+                        || (p == Provider::Claude && skill.shared.is_some()))
             })
             .collect();
         let all_on = togglable.iter().all(|&p| skill.enabled(p) == Some(true));
@@ -275,12 +319,24 @@ impl Shelf {
             ));
         }
         let selection = Selection::Skill(name.clone());
+        switches.push(self.row_uninstall(
+            format!("uninstall-skill-{name}"),
+            &selection,
+            skill.default,
+            cx,
+        ));
         let selected = self.selected.as_ref() == Some(&selection);
         self.row(
             format!("skill-{name}"),
             selected,
-            skill.name.clone(),
-            if skill.shared.is_none() {
+            if skill.default {
+                skill.title.clone()
+            } else {
+                skill.name.clone()
+            },
+            if skill.default {
+                None
+            } else if skill.shared.is_none() {
                 Some("unmanaged")
             } else {
                 self.has_update(&skill.name).then_some("update available")
@@ -294,10 +350,12 @@ impl Shelf {
 
     pub(super) fn render_plugins(&self, cx: &mut Context<Self>) -> AnyElement {
         let plugins: Vec<_> = self.visible_plugins(cx).collect();
-        let rows: Vec<_> = plugins
+        let first_default = plugins.iter().position(|p| p.is_default());
+        let mut rows: Vec<_> = plugins
             .into_iter()
             .map(|p| self.plugin_row(p, cx))
             .collect();
+        with_default_heading(&mut rows, first_default, cx);
         let warnings: Vec<_> = self
             .plugin_errors
             .iter()
@@ -307,19 +365,25 @@ impl Shelf {
             .size_full()
             .child(self.page_header("Plugins", Some(rows.len()), cx))
             .children(warnings)
-            .child(self.column_header(&self.agent_columns(), cx))
+            .child(self.column_header(&self.installed_columns(), cx))
             .child(list_body("plugin-list", rows, &self.list_scroll, cx))
             .into_any_element()
     }
 
     fn plugin_row(&self, plugin: &Plugin, cx: &mut Context<Self>) -> AnyElement {
         let id = plugin.id.clone();
-        let installed: Vec<Provider> = plugin.installs.keys().copied().collect();
+        let installed: Vec<Provider> = plugin
+            .installs
+            .iter()
+            .filter(|(_, i)| !i.default)
+            .map(|(&p, _)| p)
+            .collect();
         let all_on = plugin.installs.values().all(|i| i.enabled);
         let mut switches = Vec::new();
         if self.agents.len() > 1 {
+            let locked = installed.is_empty();
             switches.push(
-                self.switch(format!("plugin-all-{id}"), all_on, false, "All agents", {
+                self.switch(format!("plugin-all-{id}"), all_on, locked, "All agents", {
                     let id = id.clone();
                     let installed = installed.clone();
                     cx.listener(move |this, on: &bool, window, cx| {
@@ -334,7 +398,7 @@ impl Shelf {
             switches.push(self.switch(
                 format!("plugin-{}-{id}", provider.cli()),
                 install.is_some_and(|i| i.enabled),
-                install.is_none(),
+                install.is_none_or(|i| i.default),
                 provider.label(),
                 cx.listener(move |this, on: &bool, window, cx| {
                     this.set_plugin_enabled(&id, &[provider], *on, window, cx)
@@ -342,6 +406,12 @@ impl Shelf {
             ));
         }
         let selection = Selection::Plugin(id.clone());
+        switches.push(self.row_uninstall(
+            format!("uninstall-plugin-{id}"),
+            &selection,
+            plugin.is_default(),
+            cx,
+        ));
         let selected = self.selected.as_ref() == Some(&selection);
         self.row(
             format!("plugin-{id}"),
@@ -353,6 +423,42 @@ impl Shelf {
             cx.listener(move |this, _, _, cx| this.select(Some(selection.clone()), cx)),
             cx,
         )
+    }
+
+    /// The agent columns, then an untitled one for each row's uninstall button.
+    fn installed_columns(&self) -> Vec<&'static str> {
+        let mut columns = self.agent_columns();
+        columns.push("");
+        columns
+    }
+
+    /// A row's own uninstall button: selects the row and asks to confirm. Defaults get an empty
+    /// cell, so the columns stay aligned.
+    fn row_uninstall(
+        &self,
+        id: String,
+        selection: &Selection,
+        default: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if default {
+            return cell().into_any_element();
+        }
+        let selection = selection.clone();
+        cell()
+            .child(
+                Button::new(SharedString::from(id))
+                    .ghost()
+                    .small()
+                    .icon(Lucide::Trash)
+                    .tooltip("Uninstall… (Delete)")
+                    .disabled(self.busy)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.select(Some(selection.clone()), cx);
+                        this.confirm_uninstall(window, cx);
+                    })),
+            )
+            .into_any_element()
     }
 
     fn uninstall_button(&self, cx: &mut Context<Self>) -> Button {
@@ -393,11 +499,15 @@ impl Shelf {
         {
             locations.push(fact("Shared", env.tilde(shared), cx));
         }
-        let subtitle = skill.source.clone().or(skill
-            .shared
-            .is_none()
-            .then(|| "Not managed by skillshelf".into()));
-        let uninstall = self.uninstall_button(cx);
+        let subtitle = if skill.default {
+            Some("Ships with Codex; cannot be removed or turned off".into())
+        } else {
+            skill.source.clone().or(skill
+                .shared
+                .is_none()
+                .then(|| "Not managed by skillshelf".into()))
+        };
+        let uninstall = (!skill.default).then(|| self.uninstall_button(cx));
         v_flex()
             .size_full()
             .child(self.detail_header(skill.title.clone(), subtitle, uninstall, cx))
@@ -442,7 +552,7 @@ impl Shelf {
                 fact(provider.label(), summary, cx)
             })
             .collect();
-        let uninstall = self.uninstall_button(cx);
+        let uninstall = (!plugin.is_default()).then(|| self.uninstall_button(cx));
         v_flex()
             .size_full()
             .child(self.detail_header(
@@ -488,6 +598,7 @@ mod tests {
             shared: shared.then(|| PathBuf::from(format!("agents/{name}"))),
             source: None,
             installs,
+            default: false,
         }
     }
 
