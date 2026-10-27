@@ -5,6 +5,7 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants},
     h_flex,
     input::Input,
+    menu::{DropdownMenu, PopupMenuItem},
     notification::Notification,
     radio::{Radio, RadioGroup},
     scroll::ScrollableElement,
@@ -18,6 +19,7 @@ use skillshelf_core::{Provider, github_rate_limit};
 
 use super::{Page, Shelf, divider, icon_line, icon_row};
 use crate::settings::{self, GitHubAccess};
+use crate::theme;
 
 const NEW_TOKEN_URL: &str = "https://github.com/settings/personal-access-tokens/new";
 
@@ -145,6 +147,7 @@ impl Shelf {
     }
 
     pub(super) fn render_settings(&self, cx: &mut Context<Self>) -> AnyElement {
+        let active_theme = cx.theme().theme_name().clone();
         let theme = cx.theme();
         let muted = theme.muted_foreground;
         let selected = GitHubAccess::ALL
@@ -218,9 +221,18 @@ impl Shelf {
                 h_flex()
                     .px_4()
                     .py_3()
+                    .justify_between()
                     .border_b_1()
                     .border_color(theme.border)
-                    .child(div().text_lg().font_semibold().child("Settings")),
+                    .child(div().text_lg().font_semibold().child("Settings"))
+                    .child(
+                        Button::new("reload")
+                            .small()
+                            .icon(IconName::RefreshCw)
+                            .label("Reload")
+                            .tooltip("Read skills and plugins again (Ctrl+R)")
+                            .on_click(cx.listener(|this, _, _, cx| this.reload_all(cx))),
+                    ),
             )
             .child(
                 div()
@@ -270,6 +282,35 @@ impl Shelf {
                                 this.child(token_form)
                             })
                             .child(div().text_sm().child(status))
+                            .child(divider(cx))
+                            .child(div().font_semibold().child("Theme"))
+                            .child(div().text_sm().text_color(muted).child(
+                                "Base16 schemes dropped into the themes folder show up here too.",
+                            ))
+                            .child(
+                                h_flex().child(
+                                    Button::new("theme")
+                                        .small()
+                                        .outline()
+                                        .icon(IconName::Palette)
+                                        .label(active_theme.clone())
+                                        .dropdown_menu(move |menu, _, cx| {
+                                            let mut menu = menu.scrollable(true).max_h(px(420.));
+                                            for (name, _) in theme::names(cx) {
+                                                let checked = name == active_theme;
+                                                let pick = name.clone();
+                                                menu = menu.item(
+                                                    PopupMenuItem::new(name)
+                                                        .checked(checked)
+                                                        .on_click(move |_, _, cx| {
+                                                            theme::select(&pick, cx)
+                                                        }),
+                                                );
+                                            }
+                                            menu
+                                        }),
+                                ),
+                            )
                             .child(divider(cx))
                             .child(div().font_semibold().child("About"))
                             .child(div().text_sm().text_color(muted).child(format!(

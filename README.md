@@ -92,7 +92,7 @@ Put the `skillshelf` binary on your `PATH` (e.g. `~/.local/bin`).
 
 skillshelf ships its own light and dark themes and a set of Base16 schemes. Drop more Base16
 scheme files (`*.yaml`) into `~/.config/skillshelf/themes/` (`%APPDATA%\skillshelf\themes\` on
-Windows) and pick them from the palette button in the title bar.
+Windows) and pick them under Settings → Theme, or from the command palette (`Ctrl+K`).
 
 The UI font is [Geist](https://github.com/vercel/geist-font), embedded under the SIL Open Font
 License (`OFL-Geist.txt` in the release archive).
