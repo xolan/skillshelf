@@ -28,7 +28,7 @@ fn main() -> anyhow::Result<()> {
             on(Provider::Codex)
         );
     }
-    for error in errors {
+    for (_, error) in errors {
         eprintln!("error: {error}");
     }
     Ok(())

@@ -94,7 +94,7 @@ impl Shelf {
         let Some(env) = self.env.clone() else {
             return;
         };
-        let agents = self.agents.clone();
+        let agents = self.agents().to_vec();
         self.loading_offers = true;
         cx.notify();
         cx.spawn(async move |this, cx| {
@@ -337,7 +337,7 @@ impl Shelf {
     }
 
     fn offer_columns(&self) -> Vec<&'static str> {
-        let agents = self.agents.iter().map(|p| p.label());
+        let agents = self.agents().iter().map(|p| p.label());
         ["Installs"].into_iter().chain(agents).collect()
     }
 
@@ -352,7 +352,7 @@ impl Shelf {
                 .child(offer.install_count.map(compact).unwrap_or_default())
                 .into_any_element(),
         ];
-        for provider in &self.agents {
+        for provider in self.agents() {
             let state = match offer.providers.get(provider) {
                 Some(true) => "installed",
                 Some(false) => "available",
@@ -395,7 +395,7 @@ impl Shelf {
             .disabled(!installable || self.busy)
             .on_click(cx.listener(|this, _, window, cx| this.install_offer(window, cx)));
         let providers: Vec<_> = self
-            .agents
+            .agents()
             .iter()
             .map(|provider| {
                 let state = match offer.providers.get(provider) {

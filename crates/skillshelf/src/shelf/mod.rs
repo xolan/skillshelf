@@ -6,6 +6,7 @@ mod installed;
 mod licenses;
 mod palette;
 mod preferences;
+mod profiles;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
@@ -34,6 +35,7 @@ use skillshelf_core::{
     SkillUpdate, clean_staging, execute, scan_plugins, scan_skills,
 };
 
+use crate::profiles::Profiles;
 use crate::settings::{self, GitHubAccess};
 use crate::{assets, theme};
 
@@ -73,6 +75,7 @@ enum Page {
     Plugins,
     FindSkills,
     FindPlugins,
+    Profiles,
     Settings,
     Licenses,
 }
@@ -92,6 +95,7 @@ impl Page {
             Page::Plugins => "Filter plugins",
             Page::FindSkills => "Search skills.sh",
             Page::FindPlugins => "Filter marketplace plugins",
+            Page::Profiles => "Filter profiles",
             Page::Settings => "",
             Page::Licenses => "Filter licenses and crates",
         }
@@ -108,20 +112,26 @@ enum Selection {
     Offer(String),
     /// An asset or crate on the Licenses page, by index.
     License(usize),
+    /// A profile, by name.
+    Profile(String),
 }
 
 pub struct Shelf {
     env: Option<Env>,
     page: Page,
-    /// The agents skillshelf manages, as turned on in Settings; the others are left alone.
-    agents: Vec<Provider>,
+    /// The active one decides which agents skillshelf manages; the others are left alone.
+    profiles: Profiles,
     /// Where each agent installed on this computer shows it is, once the environment is read.
     found: BTreeMap<Provider, PathBuf>,
-    /// Skills of the managed agents.
+    /// Every skill, as read; profiles are applied to these.
+    scanned: Vec<Skill>,
+    /// Plugins of the agents of every profile.
+    all_plugins: Vec<Plugin>,
+    /// Skills and plugins of the managed agents.
     skills: Vec<Skill>,
     plugins: Vec<Plugin>,
-    /// Providers whose plugin list could not be read.
-    plugin_errors: Vec<String>,
+    /// Providers whose plugin list could not be read, with the error.
+    plugin_errors: Vec<(Provider, String)>,
     load_error: Option<SharedString>,
     loading: bool,
     busy: bool,
@@ -152,6 +162,8 @@ pub struct Shelf {
     github_access: GitHubAccess,
     /// Where a personal access token is typed; cleared once saved.
     token_input: Entity<InputState>,
+    /// The name field of the new and rename profile dialogs.
+    profile_name: Entity<InputState>,
     has_token: bool,
     /// The result of the last GitHub access check, e.g. the hourly request limit.
     access_status: Option<Result<SharedString, SharedString>>,
@@ -173,6 +185,7 @@ impl Shelf {
                 .masked(true)
                 .placeholder("github_pat_…")
         });
+        let profile_name = cx.new(|cx| InputState::new(window, cx).placeholder("Profile name"));
         let subscription = cx.subscribe(&filter, |this, _, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
                 this.list_scroll.set_offset(Point::default());
@@ -185,8 +198,10 @@ impl Shelf {
         let mut shelf = Shelf {
             env: None,
             page: Page::Skills,
-            agents: settings::load_agents(),
+            profiles: Profiles::load(),
             found: BTreeMap::new(),
+            scanned: Vec::new(),
+            all_plugins: Vec::new(),
             skills: Vec::new(),
             plugins: Vec::new(),
             plugin_errors: Vec::new(),
@@ -213,6 +228,7 @@ impl Shelf {
             list_scroll: ScrollHandle::new(),
             github_access: GitHubAccess::load(),
             token_input,
+            profile_name,
             has_token: settings::read_token().is_some(),
             access_status: None,
             access_task: None,
@@ -227,11 +243,18 @@ impl Shelf {
         shelf
     }
 
+    /// The agents skillshelf manages: the active profile's.
+    fn agents(&self) -> &[Provider] {
+        &self.profiles.active().agents
+    }
+
+    /// Reads skills, and the plugins of every profile's agents, so profiles that are not in use
+    /// can be edited too.
     fn reload(&mut self, cx: &mut Context<Self>) {
         self.loading = true;
         cx.notify();
         let env = self.env.clone();
-        let agents = self.agents.clone();
+        let agents = self.profiles.all_agents();
         cx.spawn(async move |this, cx| {
             let loaded = cx
                 .background_spawn(async move {
@@ -247,7 +270,7 @@ impl Shelf {
                         .into_iter()
                         .filter_map(|p| Some((p, env.locate(p)?)))
                         .collect();
-                    let mut skills = installed::for_agents(scan_skills(&env)?, &agents);
+                    let mut skills = scan_skills(&env)?;
                     let (mut plugins, errors) = scan_plugins(&env, &agents);
                     // Defaults go last, under their own heading.
                     skills.sort_by_key(|s| s.default);
@@ -261,10 +284,15 @@ impl Shelf {
                     Ok((env, found, skills, plugins, errors)) => {
                         this.env = Some(env);
                         this.found = found;
-                        this.skills = skills;
-                        this.plugins = plugins;
+                        this.scanned = skills;
+                        this.all_plugins = plugins;
                         this.plugin_errors = errors;
                         this.load_error = None;
+                        this.sync_lists();
+                        // While steps run, the lists are half way; the reload after them records.
+                        if !this.busy {
+                            this.record_profile();
+                        }
                     }
                     Err(e) => this.load_error = Some(format!("{e:#}").into()),
                 }
@@ -399,7 +427,7 @@ impl Shelf {
 
     /// What each row of the current page's list selects, top to bottom.
     fn rows(&self, cx: &App) -> Vec<Selection> {
-        if self.agents.is_empty() && self.page.needs_agents() {
+        if self.agents().is_empty() && self.page.needs_agents() {
             return Vec::new();
         }
         match self.page {
@@ -422,6 +450,10 @@ impl Shelf {
                 .visible_offers(cx)
                 .take(discover::MAX_OFFERS)
                 .map(|o| Selection::Offer(o.id.clone()))
+                .collect(),
+            Page::Profiles => self
+                .visible_profiles(cx)
+                .map(|(_, p)| Selection::Profile(p.name.clone()))
                 .collect(),
             Page::Settings => Vec::new(),
             Page::Licenses => self
@@ -457,6 +489,11 @@ impl Shelf {
             Some(Selection::Skill(_)) => self.download_update(window, cx),
             Some(Selection::Hit(_)) => self.install_hit(window, cx),
             Some(Selection::Offer(_)) => self.install_offer(window, cx),
+            Some(Selection::Profile(name)) => {
+                if let Some(ix) = self.profiles.position(name) {
+                    self.switch_profile(ix, window, cx);
+                }
+            }
             Some(Selection::Plugin(_) | Selection::License(_)) => {}
         }
     }
@@ -483,6 +520,7 @@ impl Shelf {
                         .when(working, |this| {
                             this.child(Spinner::new().small().color(cx.theme().muted_foreground))
                         })
+                        .child(self.profile_menu(cx))
                         .child(
                             Button::new("reload")
                                 .ghost()
@@ -557,6 +595,14 @@ impl Shelf {
                     item(Page::FindPlugins, "Plugins", Icon::new(Lucide::Store), None),
                 ])),
             )
+            .child(
+                SidebarGroup::new("Manage").child(SidebarMenu::new().child(item(
+                    Page::Profiles,
+                    "Profiles",
+                    Icon::new(Lucide::Layers),
+                    Some(self.profiles.list.len()),
+                ))),
+            )
             .footer(
                 SidebarFooter::new()
                     .selected(self.page == Page::Settings)
@@ -577,7 +623,7 @@ impl Shelf {
     }
 
     fn render_page(&self, cx: &mut Context<Self>) -> AnyElement {
-        if self.agents.is_empty() && self.page.needs_agents() {
+        if self.agents().is_empty() && self.page.needs_agents() {
             return self.no_agents(cx);
         }
         match self.page {
@@ -585,6 +631,7 @@ impl Shelf {
             Page::Plugins => self.render_plugins(cx),
             Page::FindSkills => self.render_find_skills(cx),
             Page::FindPlugins => self.render_find_plugins(cx),
+            Page::Profiles => self.render_profiles(cx),
             Page::Settings => self.render_settings(cx),
             Page::Licenses => self.render_licenses(cx),
         }
@@ -612,18 +659,13 @@ impl Shelf {
 
     /// Column titles for the managed agents, after an "All" column when there are several.
     fn agent_columns(&self) -> Vec<&'static str> {
-        let all = (self.agents.len() > 1).then_some("All");
+        let all = (self.agents().len() > 1).then_some("All");
         all.into_iter()
-            .chain(self.agents.iter().map(|p| p.label()))
+            .chain(self.agents().iter().map(|p| p.label()))
             .collect()
     }
 
-    fn page_header(
-        &self,
-        title: &str,
-        count: Option<usize>,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn page_header(&self, title: &str, count: Option<usize>, cx: &mut Context<Self>) -> Div {
         h_flex()
             .px_4()
             .py_3()
@@ -752,6 +794,7 @@ impl Shelf {
             Selection::Hit(id) => self.hit_detail(self.hits.iter().find(|h| &h.id == id)?, cx),
             Selection::Offer(id) => self.offer_detail(self.offer(id)?, cx),
             Selection::License(ix) => self.license_detail(*ix, cx)?,
+            Selection::Profile(name) => self.profile_detail(self.profiles.position(name)?, cx),
         })
     }
 

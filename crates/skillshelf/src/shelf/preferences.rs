@@ -51,40 +51,34 @@ impl Shelf {
         cx.notify();
     }
 
-    /// Turns managing an agent on or off, then reads the lists again for the new set.
+    /// Turns managing an agent on or off in a profile, then reads the lists again for the new set.
     fn set_agent(
         &mut self,
+        profile: usize,
         agent: Provider,
         on: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let agents: Vec<Provider> = Provider::ALL
-            .into_iter()
-            .filter(|&p| {
-                if p == agent {
-                    on
-                } else {
-                    self.agents.contains(&p)
-                }
-            })
-            .collect();
-        if let Err(e) = settings::save_agents(&agents) {
-            window.push_notification(Notification::error(format!("{e:#}")), cx);
+        if !self.edit_profile(profile, |p| p.set_agent(agent, on), window, cx) {
             return;
         }
-        self.agents = agents;
-        self.offers = None;
-        self.offer_errors.clear();
+        if profile == self.profiles.active {
+            self.offers = None;
+            self.offer_errors.clear();
+            self.sync_lists();
+        }
         self.reload(cx);
     }
 
-    fn agent_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    /// A switch for each agent, turning managing it on or off in a profile.
+    pub(super) fn agent_rows(&self, profile: usize, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let muted = cx.theme().muted_foreground;
+        let agents = &self.profiles.list[profile].agents;
         Provider::ALL
             .into_iter()
             .map(|agent| {
-                let on = self.agents.contains(&agent);
+                let on = agents.contains(&agent);
                 let found = self.found.get(&agent);
                 let note = match (&self.env, found) {
                     (None, _) => "Looking for it…".to_owned(),
@@ -94,13 +88,18 @@ impl Shelf {
                 h_flex()
                     .gap_3()
                     .child(
-                        Switch::new(SharedString::from(format!("agent-{}", agent.cli())))
-                            .checked(on)
-                            // An agent that isn't installed can be turned off, not on.
-                            .disabled(self.busy || (!on && found.is_none()))
-                            .on_change(cx.listener(move |this, on: &bool, window, cx| {
-                                this.set_agent(agent, *on, window, cx)
-                            })),
+                        Switch::new(SharedString::from(format!(
+                            "agent-{profile}-{}",
+                            agent.cli()
+                        )))
+                        .checked(on)
+                        // An agent that isn't installed can be turned off, not on.
+                        .disabled(self.busy || (!on && found.is_none()))
+                        .on_change(cx.listener(
+                            move |this, on: &bool, window, cx| {
+                                this.set_agent(profile, agent, *on, window, cx)
+                            },
+                        )),
                     )
                     .child(
                         v_flex()
@@ -235,11 +234,17 @@ impl Shelf {
                             .gap_3()
                             .max_w(px(680.))
                             .child(div().font_semibold().child("Agents"))
-                            .child(div().text_sm().text_color(muted).child(
+                            .child(div().text_sm().text_color(muted).child(format!(
                                 "skillshelf lists and changes skills and plugins only for the \
-                                 agents turned on here, and leaves the others alone.",
-                            ))
-                            .child(v_flex().gap_3().children(self.agent_rows(cx)))
+                                 agents turned on here, and leaves the others alone. The choice \
+                                 belongs to the “{}” profile.",
+                                self.profiles.active().name
+                            )))
+                            .child(
+                                v_flex()
+                                    .gap_3()
+                                    .children(self.agent_rows(self.profiles.active, cx)),
+                            )
                             .child(divider(cx))
                             .child(div().font_semibold().child("GitHub access"))
                             .child(div().text_sm().text_color(muted).child(
