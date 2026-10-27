@@ -33,8 +33,8 @@ skillshelf talks to `skills.sh`, `api.github.com`, `codeload.github.com` and
 
 ## Install
 
-Each release holds a Linux tarball and a Windows zip for x86_64 and aarch64, each with a
-`.sha256` checksum file.
+Each release holds a Linux tarball and a Windows zip for x86_64 and aarch64, and a `PKGBUILD`
+for Arch Linux, each with a `.sha256` checksum file.
 
 ### Linux
 
@@ -44,7 +44,7 @@ Download `skillshelf-<version>-<arch>-unknown-linux-gnu.tar.gz` and its `.sha256
 you picked and run:
 
 ```bash
-version=1.0.0
+version=1.1.0
 name=skillshelf-$version-$(uname -m)-unknown-linux-gnu
 sha256sum -c "$name.tar.gz.sha256" &&
   tar -xzf "$name.tar.gz" &&
@@ -58,6 +58,24 @@ If the checksum doesn't match, nothing is installed.
 The desktop entry starts `skillshelf` from your `PATH`. If it doesn't show in your app menu, or
 won't start from there, check that `~/.local/bin` is on the `PATH` of your desktop session, not
 only your shell's, and log out and back in.
+
+### Arch Linux
+
+On Arch and other pacman-based distributions, download `PKGBUILD` and `PKGBUILD.sha256` from
+[Releases](https://github.com/xolan/skillshelf/releases) into an empty folder, and in that folder
+run:
+
+```bash
+sha256sum -c PKGBUILD.sha256 && makepkg -si
+```
+
+This builds a `skillshelf-bin` package from the release's prebuilt binary, checks the tarball
+against the checksum in the `PKGBUILD`, and installs it with pacman, which pulls in the libraries it
+needs. If you have no Vulkan driver yet, pacman asks you to pick the one for your GPU, such as
+`vulkan-radeon`, `vulkan-intel` or `nvidia-utils`.
+
+If you installed from the tarball before, remove that copy first (the first `rm` command under
+[Uninstall](#uninstall)), or the one in `~/.local/bin` keeps starting instead.
 
 ### Windows
 
@@ -105,7 +123,8 @@ that folder each time it starts.
 
 ## Uninstall
 
-On Linux:
+On Linux, if you installed the Arch package, run `sudo pacman -R skillshelf-bin` in place of the
+first `rm` command, which removes the binary, desktop entry and icon:
 
 ```bash
 rm ~/.local/bin/skillshelf \
@@ -198,7 +217,8 @@ version on `main` publishes a release.
 ## Releases
 
 Pushing to `main` with a new `version` in `Cargo.toml` runs CI, builds Linux and Windows binaries
-(x86_64 and aarch64) and publishes a GitHub release `v<version>`.
+(x86_64 and aarch64), writes the Arch Linux `PKGBUILD` from `assets/arch/PKGBUILD` with the
+tarballs' checksums, and publishes a GitHub release `v<version>`.
 
 ## License
 
