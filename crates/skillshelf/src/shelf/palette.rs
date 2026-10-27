@@ -1,4 +1,4 @@
-//! The command palette (`ctrl-k`): go to a page, reload, pick a theme.
+//! The command palette (`ctrl-k`): go to a page, reload, switch profiles, pick a theme.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -17,6 +17,7 @@ use crate::theme;
 enum Run {
     Open(Page),
     Reload,
+    Profile(usize),
     Theme(SharedString),
 }
 
@@ -49,6 +50,7 @@ impl Shelf {
                         Icon::new(Lucide::Store),
                         Page::FindPlugins,
                     ),
+                    page("Profiles", Icon::new(Lucide::Layers), Page::Profiles),
                     page("Settings", IconName::Settings.into(), Page::Settings),
                     page("Licenses", IconName::FileText.into(), Page::Licenses),
                 ],
@@ -62,6 +64,22 @@ impl Shelf {
                         .keywords(["refresh", "rescan"]),
                     Run::Reload,
                 )],
+            ),
+            (
+                "Profile",
+                self.profiles
+                    .list
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, profile)| {
+                        let item = CommandItem::new()
+                            .label(profile.name.clone())
+                            .icon(Icon::new(Lucide::Layers))
+                            .checked(ix == self.profiles.active)
+                            .keywords(["profile", "switch"]);
+                        (item, Run::Profile(ix))
+                    })
+                    .collect(),
             ),
             (
                 "Theme",
@@ -100,7 +118,7 @@ impl Shelf {
                     }
                     let mut command = Command::new(&palette)
                         .bordered(false)
-                        .placeholder("Type a command or a theme")
+                        .placeholder("Type a command, a profile or a theme")
                         .max_h(px(400.));
                     for (label, items) in groups.iter() {
                         let items = items.iter().map(|(item, _)| item.clone());
@@ -125,6 +143,7 @@ impl Shelf {
                                         .update(cx, |filter, cx| filter.focus(window, cx));
                                 }
                                 Run::Reload => shelf.reload_all(cx),
+                                Run::Profile(ix) => shelf.switch_profile(ix, window, cx),
                                 Run::Theme(name) => theme::select(&name, cx),
                             })
                             .ok();

@@ -7,7 +7,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::*;
 use skillshelf_core::{
-    Plugin, Provider, Skill, check_skill_update, fetch_update, toggle_plugin, toggle_skill,
+    Plugin, Provider, Skill, check_skill_update, fetch_update, skill_state, toggle_plugin,
+    toggle_skill,
 };
 
 use super::change::{Change, open_change_dialog};
@@ -58,6 +59,18 @@ fn with_default_heading(rows: &mut [AnyElement], first: Option<usize>, cx: &mut 
         );
     let taken = std::mem::replace(row, div().into_any_element());
     *row = v_flex().child(heading).child(taken).into_any_element();
+}
+
+/// The plugins `agents` have installed, each with those agents' installs only.
+pub(super) fn plugins_for(plugins: &[Plugin], agents: &[Provider]) -> Vec<Plugin> {
+    plugins
+        .iter()
+        .filter_map(|plugin| {
+            let mut plugin = plugin.clone();
+            plugin.installs.retain(|p, _| agents.contains(p));
+            (!plugin.installs.is_empty()).then_some(plugin)
+        })
+        .collect()
 }
 
 impl Shelf {
@@ -280,18 +293,14 @@ impl Shelf {
         let name = skill.name.clone();
         // A shared skill can be turned on for Claude by linking it in.
         let togglable: Vec<Provider> = self
-            .agents
+            .agents()
             .iter()
             .copied()
-            .filter(|&p| {
-                !skill.default
-                    && (skill.enabled(p).is_some()
-                        || (p == Provider::Claude && skill.shared.is_some()))
-            })
+            .filter(|&p| skill_state(skill, p).is_some())
             .collect();
         let all_on = togglable.iter().all(|&p| skill.enabled(p) == Some(true));
         let mut switches = Vec::new();
-        if self.agents.len() > 1 {
+        if self.agents().len() > 1 {
             switches.push(self.switch(
                 format!("skill-all-{name}"),
                 all_on,
@@ -306,7 +315,7 @@ impl Shelf {
                 },
             ));
         }
-        for &provider in &self.agents {
+        for &provider in self.agents() {
             let name = name.clone();
             switches.push(self.switch(
                 format!("skill-{}-{name}", provider.cli()),
@@ -359,7 +368,8 @@ impl Shelf {
         let warnings: Vec<_> = self
             .plugin_errors
             .iter()
-            .map(|error| warning(error.clone(), cx))
+            .filter(|(provider, _)| self.agents().contains(provider))
+            .map(|(_, error)| warning(error.clone(), cx))
             .collect();
         v_flex()
             .size_full()
@@ -380,7 +390,7 @@ impl Shelf {
             .collect();
         let all_on = plugin.installs.values().all(|i| i.enabled);
         let mut switches = Vec::new();
-        if self.agents.len() > 1 {
+        if self.agents().len() > 1 {
             let locked = installed.is_empty();
             switches.push(
                 self.switch(format!("plugin-all-{id}"), all_on, locked, "All agents", {
@@ -392,7 +402,7 @@ impl Shelf {
                 }),
             );
         }
-        for &provider in &self.agents {
+        for &provider in self.agents() {
             let id = id.clone();
             let install = plugin.installs.get(&provider);
             switches.push(self.switch(
@@ -479,7 +489,7 @@ impl Shelf {
         let mut locations: Vec<_> = skill
             .installs
             .iter()
-            .filter(|install| self.agents.contains(&install.provider))
+            .filter(|install| self.agents().contains(&install.provider))
             .map(|install| {
                 let kind = match std::fs::read_link(&install.path) {
                     Ok(target) => format!("link to {}", env.tilde(&target)),

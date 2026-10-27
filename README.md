@@ -10,6 +10,9 @@ A desktop app for managing agent skills and plugins for Claude Code and Codex CL
 - Skills installed from GitHub show when a newer version is out, and update in place.
 - Pick the agents it manages in Settings; it leaves the others alone. None are on until you turn
   them on.
+- Keep profiles: each one holds the agents it manages and which of their skills and plugins are
+  on. Switch from the title bar to turn everything on and off as that profile has it. The Default
+  profile can't be removed; the profile in use keeps whatever you change while it is active.
 
 Runs on Linux and Windows.
 

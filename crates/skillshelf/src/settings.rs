@@ -1,5 +1,5 @@
-//! Settings in `~/.config/skillshelf/` (`%APPDATA%\skillshelf\` on Windows): `settings.json`,
-//! plus the GitHub token in a private file of its own, so `settings.json` can live in a dotfiles
+//! Settings in `~/.config/skillshelf/` (`%APPDATA%\skillshelf\` on Windows): `settings.json`
+//! (with the profiles, see [`crate::profiles`]), plus the GitHub token in a private file of its own, so `settings.json` can live in a dotfiles
 //! repository without leaking it.
 
 use std::fs;
@@ -32,7 +32,7 @@ fn token_path() -> PathBuf {
     config_dir().join("github-token")
 }
 
-fn load() -> Value {
+pub fn load() -> Value {
     fs::read_to_string(settings_path())
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
@@ -44,8 +44,14 @@ pub fn get(key: &str) -> Option<String> {
 }
 
 pub fn set(key: &str, value: impl Into<Value>) -> Result<()> {
+    let value = value.into();
+    update(|settings| settings[key] = value)
+}
+
+/// Reads `settings.json`, edits it and writes it back.
+pub fn update(edit: impl FnOnce(&mut Value)) -> Result<()> {
     let mut settings = load();
-    settings[key] = value.into();
+    edit(&mut settings);
     fs::create_dir_all(config_dir())?;
     fs::write(
         settings_path(),
@@ -54,16 +60,8 @@ pub fn set(key: &str, value: impl Into<Value>) -> Result<()> {
     Ok(())
 }
 
-/// The agents skillshelf manages, in display order: none until the user turns some on.
-pub fn load_agents() -> Vec<Provider> {
-    agents_in(&load()["agents"])
-}
-
-pub fn save_agents(agents: &[Provider]) -> Result<()> {
-    set("agents", agents.iter().map(|p| p.cli()).collect::<Vec<_>>())
-}
-
-fn agents_in(saved: &Value) -> Vec<Provider> {
+/// The agents in a saved list of tool names, in display order: none until the user turns some on.
+pub fn agents_in(saved: &Value) -> Vec<Provider> {
     let names: Vec<&str> = saved
         .as_array()
         .into_iter()

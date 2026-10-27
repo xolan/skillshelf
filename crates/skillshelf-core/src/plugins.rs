@@ -34,8 +34,8 @@ impl Plugin {
 }
 
 /// Installed user-scope plugins of the given providers. Each provider's tool is the source of
-/// truth; a provider whose tool fails is reported in the error list and skipped.
-pub fn scan_plugins(env: &Env, providers: &[Provider]) -> (Vec<Plugin>, Vec<String>) {
+/// truth; a provider whose tool fails is reported in the error list, with its message, and skipped.
+pub fn scan_plugins(env: &Env, providers: &[Provider]) -> (Vec<Plugin>, Vec<(Provider, String)>) {
     let mut plugins: BTreeMap<String, Plugin> = BTreeMap::new();
     let mut errors = Vec::new();
     for &provider in providers {
@@ -59,7 +59,7 @@ pub fn scan_plugins(env: &Env, providers: &[Provider]) -> (Vec<Plugin>, Vec<Stri
                     plugin.installs.insert(provider, install);
                 }
             }
-            Err(e) => errors.push(format!("{}: {e:#}", provider.label())),
+            Err(e) => errors.push((provider, format!("{}: {e:#}", provider.label()))),
         }
     }
     (plugins.into_values().collect(), errors)

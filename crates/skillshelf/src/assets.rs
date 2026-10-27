@@ -15,7 +15,10 @@ pub const FONTS: &[&[u8]] = &[
     include_bytes!("../fonts/GeistMono-Bold.ttf"),
 ];
 
-gpui_kit::assets::icon_assets!(ExtraIcons, [Puzzle, Store, Trash, Download, Lock]);
+gpui_kit::assets::icon_assets!(
+    ExtraIcons,
+    [Puzzle, Store, Trash, Download, Lock, Layers, Pencil]
+);
 
 /// The app icon, also shipped next to the binary for the desktop entry.
 pub const LOGO: &str = "brand/skillshelf.svg";

@@ -5,6 +5,7 @@ mod discover;
 mod env;
 mod ops;
 mod plugins;
+mod profiles;
 mod skills;
 
 pub use discover::{
@@ -16,6 +17,7 @@ pub use ops::{
     Action, execute, install_plugin, toggle_plugin, toggle_skill, uninstall_plugin, uninstall_skill,
 };
 pub use plugins::{AvailablePlugin, Plugin, PluginInstall, available_plugins, scan_plugins};
+pub use profiles::{Profile, States, skill_state};
 pub use skills::{Skill, SkillInstall, scan_skills};
 
 #[cfg(test)]
@@ -32,7 +34,11 @@ pub(crate) mod testing {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// Saved by the name of its command-line tool.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
 pub enum Provider {
     Claude,
     Codex,

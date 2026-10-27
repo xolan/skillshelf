@@ -204,8 +204,8 @@ pub(super) fn open_change_dialog(
         ("Uninstall", format!("Uninstalled {name}"))
     };
     let title = format!("{verb} “{name}”?");
-    let providers = change.choices(&shelf.agents);
-    let agents = shelf.agents.clone();
+    let providers = change.choices(shelf.agents());
+    let agents = shelf.agents().to_vec();
     let form = cx.new(|_| ChangeForm {
         env,
         change,
