@@ -80,10 +80,15 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
+      - name: Write the Arch Linux PKGBUILD
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: scripts/pkgbuild.sh "$VERSION" dist
       - env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.check.outputs.version }}

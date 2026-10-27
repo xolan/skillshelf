@@ -1,0 +1,47 @@
+# PKGBUILD for Arch Linux and other pacman-based distributions. Installs the release's prebuilt
+# binary. Each release attaches this file with its version and checksums filled in; build it in an
+# empty folder with `makepkg -si`.
+
+pkgname=skillshelf-bin
+_version=@VERSION@
+# pacman versions can't hold hyphens, which pre-release versions use.
+pkgver=${_version//-/_}
+pkgrel=1
+pkgdesc='Desktop app for managing agent skills and plugins for Claude Code and Codex CLI'
+arch=('x86_64' 'aarch64')
+url='https://github.com/xolan/skillshelf'
+license=('MIT' 'OFL-1.1')
+# libvulkan and libwayland-client are loaded at run time, so the binary doesn't list them.
+depends=(
+  'gcc-libs'
+  'glibc'
+  'hicolor-icon-theme'
+  'libxcb'
+  'libxkbcommon'
+  'libxkbcommon-x11'
+  'vulkan-driver'
+  'vulkan-icd-loader'
+  'wayland'
+)
+optdepends=(
+  'claude-code: manage Claude Code skills and plugins'
+  'openai-codex: manage Codex CLI skills and plugins'
+  'github-cli: sign in to GitHub for skill downloads'
+)
+provides=('skillshelf')
+conflicts=('skillshelf')
+options=('!debug')
+source_x86_64=("$url/releases/download/v$_version/skillshelf-$_version-x86_64-unknown-linux-gnu.tar.gz")
+source_aarch64=("$url/releases/download/v$_version/skillshelf-$_version-aarch64-unknown-linux-gnu.tar.gz")
+sha256sums_x86_64=('@SHA256_X86_64@')
+sha256sums_aarch64=('@SHA256_AARCH64@')
+
+package() {
+  cd "skillshelf-$_version-$CARCH-unknown-linux-gnu"
+  install -Dm755 skillshelf -t "$pkgdir/usr/bin/"
+  install -Dm644 skillshelf.desktop -t "$pkgdir/usr/share/applications/"
+  install -Dm644 skillshelf.svg -t "$pkgdir/usr/share/icons/hicolor/scalable/apps/"
+  install -Dm644 README.md -t "$pkgdir/usr/share/doc/$pkgname/"
+  install -Dm644 LICENSE LICENSE-base16-schemes OFL-Geist.txt THIRD_PARTY_LICENSES.md \
+    -t "$pkgdir/usr/share/licenses/$pkgname/"
+}
