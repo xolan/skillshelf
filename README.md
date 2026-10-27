@@ -92,10 +92,11 @@ It also changes files that belong to the agents and to `npx skills`:
 
 - `~/.agents/skills/` and `~/.agents/.skill-lock.json`, for skills it installs, updates or removes.
 - `~/.claude/settings.json` and `~/.codex/config.toml`, to turn skills and plugins on and off.
-- `~/.claude/skills/` and `~/.codex/skills/`, where it links shared skills for Claude Code and
-  removes skills you uninstall.
-- The agents' plugin folders under `~/.claude/` and `~/.codex/`, which it cleans up after the
-  agent's own CLI uninstalls a plugin.
+- `~/.claude/skills/`, where it links shared skills for Claude Code (Codex reads them from
+  `~/.agents/skills/` directly). It also removes skills you uninstall from here and from
+  `~/.codex/skills/`.
+- Claude Code's plugin folders under `~/.claude/plugins/`, which it removes after
+  `claude plugin uninstall`.
 
 `$CLAUDE_CONFIG_DIR` and `$CODEX_HOME` move `~/.claude` and `~/.codex`, as they do for the agents.
 
@@ -115,7 +116,7 @@ rm -rf ~/.agents/.skillshelf-staging
 ```
 
 On Windows, delete the folder you extracted, unpin it from Start, and delete
-`%APPDATA%\skillshelf`.
+`%APPDATA%\skillshelf` and `%USERPROFILE%\.agents\.skillshelf-staging`.
 
 Skills and plugins you installed with skillshelf stay installed, along with the agents' config
 files. Remove them in skillshelf first if you don't want them.
@@ -135,8 +136,9 @@ files. Remove them in skillshelf first if you don't want them.
 ## Themes
 
 skillshelf ships its own light and dark themes and a set of Base16 schemes. Drop more Base16
-scheme files (`*.yaml`) into the `themes` folder in skillshelf's config folder (see
-[Where it keeps its files](#where-it-keeps-its-files)) and pick them under Settings → Theme, or from the command palette (`Ctrl+K`).
+scheme files (`*.yaml`) into the `themes` folder in skillshelf's config folder (see [Where it
+keeps its files](#where-it-keeps-its-files)) and pick them under Settings → Theme, or from the
+command palette (`Ctrl+K`).
 
 The UI font is [Geist](https://github.com/vercel/geist-font), embedded under the SIL Open Font
 License (`OFL-Geist.txt` in the release archive).
