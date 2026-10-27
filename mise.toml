@@ -31,20 +31,28 @@ description = "Everything CI checks"
 depends = ["lint", "test", "licenses-check"]
 
 [tasks.licenses]
-description = "Regenerate THIRD_PARTY_LICENSES.md from the dependency tree"
+description = "Regenerate THIRD_PARTY_LICENSES.md and the app's copy from the dependency tree"
 run = "python3 -I scripts/licenses.py"
+# Python from python.org installs `python` and `py` on Windows; `python3` is the Store stub there.
+run_windows = "python -I scripts/licenses.py"
 
 [tasks.licenses-check]
-description = "Fail if THIRD_PARTY_LICENSES.md is out of date"
+description = "Fail if THIRD_PARTY_LICENSES.md or the app's copy is out of date"
 run = "python3 -I scripts/licenses.py --check"
+run_windows = "python -I scripts/licenses.py --check"
+
+[tasks.icon]
+description = "Render assets/brand/skillshelf.ico (the Windows app icon) from skillshelf.svg"
+run = "cargo run -q -p skillshelf --example icon"
 
 [tasks.inventory]
 description = "Print the installed skills and plugins (read-only)"
 run = "cargo run -q -p skillshelf-core --example inventory"
 
 [tasks.package]
-description = "Build a release tarball for a target into dist/"
-usage = 'arg "<target>" help="Rust target triple, e.g. x86_64-unknown-linux-gnu"'
+description = "Build a release archive for a target into dist/: a tarball, or a zip for Windows"
+usage = 'arg "<target>" help="Rust target triple, e.g. x86_64-unknown-linux-gnu or x86_64-pc-windows-msvc"'
+# On Windows, mise runs this with Git for Windows' bash.
 run = '''
 #!/usr/bin/env bash
 set -euo pipefail
@@ -55,13 +63,26 @@ cargo build --release --locked -p skillshelf --target "$target"
 name="skillshelf-$version-$target"
 rm -rf "dist/$name"
 mkdir -p "dist/$name"
-cp "target/$target/release/skillshelf" README.md LICENSE THIRD_PARTY_LICENSES.md "dist/$name/"
+cp README.md LICENSE THIRD_PARTY_LICENSES.md "dist/$name/"
 cp crates/skillshelf/themes/base16/LICENSE "dist/$name/LICENSE-base16-schemes"
-cp -r assets/linux/. "dist/$name/"
 # The embedded Geist fonts are under the OFL, which must travel with them.
 cp crates/skillshelf/fonts/OFL.txt "dist/$name/OFL-Geist.txt"
-cp assets/brand/skillshelf.svg "dist/$name/"
-tar -C dist -czf "dist/$name.tar.gz" "$name"
-(cd dist && sha256sum "$name.tar.gz" > "$name.tar.gz.sha256")
-echo "dist/$name.tar.gz"
+case "$target" in
+*-windows-*)
+  # The icon is built into the .exe.
+  cp "target/$target/release/skillshelf.exe" "dist/$name/"
+  archive="$name.zip"
+  # Windows' own tar (bsdtar) writes zip files; Git's GNU tar can't.
+  (cd dist && "$(cygpath "$SYSTEMROOT")/System32/tar.exe" -a -cf "$archive" "$name")
+  ;;
+*)
+  cp "target/$target/release/skillshelf" "dist/$name/"
+  cp -r assets/linux/. "dist/$name/"
+  cp assets/brand/skillshelf.svg "dist/$name/"
+  archive="$name.tar.gz"
+  tar -C dist -czf "dist/$archive" "$name"
+  ;;
+esac
+(cd dist && sha256sum "$archive" > "$archive.sha256")
+echo "dist/$archive"
 '''

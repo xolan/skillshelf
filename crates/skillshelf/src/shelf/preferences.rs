@@ -1,21 +1,22 @@
-//! The Settings page: how GitHub downloads authenticate.
+//! The Settings page: which agents skillshelf manages, and how GitHub downloads authenticate.
 
 use gpui_kit::component::{
-    ActiveTheme, IconName, Sizable, StyledExt, WindowExt,
+    ActiveTheme, Disableable, IconName, Sizable, StyledExt, WindowExt,
     button::{Button, ButtonVariants},
     h_flex,
     input::Input,
     notification::Notification,
-    radio::RadioGroup,
+    radio::{Radio, RadioGroup},
     scroll::ScrollableElement,
     spinner::Spinner,
+    switch::Switch,
     v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use skillshelf_core::github_rate_limit;
+use skillshelf_core::{Provider, github_rate_limit};
 
-use super::{Page, Shelf, divider};
+use super::{Page, Shelf, divider, icon_line, icon_row};
 use crate::settings::{self, GitHubAccess};
 
 const NEW_TOKEN_URL: &str = "https://github.com/settings/personal-access-tokens/new";
@@ -48,6 +49,67 @@ impl Shelf {
             .ok();
         }));
         cx.notify();
+    }
+
+    /// Turns managing an agent on or off, then reads the lists again for the new set.
+    fn set_agent(
+        &mut self,
+        agent: Provider,
+        on: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let agents: Vec<Provider> = Provider::ALL
+            .into_iter()
+            .filter(|&p| {
+                if p == agent {
+                    on
+                } else {
+                    self.agents.contains(&p)
+                }
+            })
+            .collect();
+        if let Err(e) = settings::save_agents(&agents) {
+            window.push_notification(Notification::error(format!("{e:#}")), cx);
+            return;
+        }
+        self.agents = agents;
+        self.offers = None;
+        self.offer_errors.clear();
+        self.reload(cx);
+    }
+
+    fn agent_rows(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let muted = cx.theme().muted_foreground;
+        Provider::ALL
+            .into_iter()
+            .map(|agent| {
+                let on = self.agents.contains(&agent);
+                let found = self.found.get(&agent);
+                let note = match (&self.env, found) {
+                    (None, _) => "Looking for it…".to_owned(),
+                    (Some(env), Some(place)) => format!("Found at {}", env.tilde(place)),
+                    (Some(_), None) => "Not found on this computer".to_owned(),
+                };
+                h_flex()
+                    .gap_3()
+                    .child(
+                        Switch::new(SharedString::from(format!("agent-{}", agent.cli())))
+                            .checked(on)
+                            // An agent that isn't installed can be turned off, not on.
+                            .disabled(self.busy || (!on && found.is_none()))
+                            .on_change(cx.listener(move |this, on: &bool, window, cx| {
+                                this.set_agent(agent, *on, window, cx)
+                            })),
+                    )
+                    .child(
+                        v_flex()
+                            .child(div().text_sm().child(agent.name()))
+                            .child(div().text_xs().text_color(muted).child(note)),
+                    )
+                    .into_any_element()
+            })
+            .collect()
     }
 
     fn set_access(&mut self, access: GitHubAccess, window: &mut Window, cx: &mut Context<Self>) {
@@ -90,22 +152,13 @@ impl Shelf {
             .iter()
             .position(|a| *a == self.github_access);
         let status = match &self.access_status {
-            None => h_flex()
-                .gap_2()
-                .text_color(muted)
-                .child(Spinner::new().small())
-                .child("Checking GitHub access…"),
-            Some(Ok(text)) => h_flex()
-                .gap_2()
-                .text_color(theme.success)
-                .child(IconName::CircleCheck)
-                .child(text.clone()),
-            Some(Err(error)) => h_flex()
-                .gap_2()
-                .items_start()
-                .text_color(theme.danger)
-                .child(div().pt_0p5().child(IconName::CircleAlert))
-                .child(div().flex_1().min_w_0().child(error.clone())),
+            None => icon_row(Spinner::new().small(), "Checking GitHub access…").text_color(muted),
+            Some(Ok(text)) => {
+                icon_row(IconName::CircleCheck, text.clone()).text_color(theme.success)
+            }
+            Some(Err(error)) => {
+                icon_row(IconName::CircleAlert, error.clone()).text_color(theme.danger)
+            }
         };
         let token_place = self
             .env
@@ -181,6 +234,13 @@ impl Shelf {
                             .p_4()
                             .gap_3()
                             .max_w(px(680.))
+                            .child(div().font_semibold().child("Agents"))
+                            .child(div().text_sm().text_color(muted).child(
+                                "skillshelf lists and changes skills and plugins only for the \
+                                 agents turned on here, and leaves the others alone.",
+                            ))
+                            .child(v_flex().gap_3().children(self.agent_rows(cx)))
+                            .child(divider(cx))
                             .child(div().font_semibold().child("GitHub access"))
                             .child(div().text_sm().text_color(muted).child(
                                 "Skills download from GitHub. Without a token GitHub allows 60 \
@@ -188,7 +248,14 @@ impl Shelf {
                             ))
                             .child(
                                 RadioGroup::vertical("github-access")
-                                    .children(GitHubAccess::ALL.map(GitHubAccess::label))
+                                    // The label's own line, not the radio's 17 px one, so it
+                                    // lines up with the circle.
+                                    .children(GitHubAccess::ALL.map(|access| {
+                                        let label = access.label();
+                                        Radio::new(label)
+                                            .accessibility_label(label)
+                                            .child(div().line_height(icon_line()).child(label))
+                                    }))
                                     .selected_index(selected)
                                     .on_change(cx.listener(|this, ix: &usize, window, cx| {
                                         this.set_access(GitHubAccess::ALL[*ix], window, cx)

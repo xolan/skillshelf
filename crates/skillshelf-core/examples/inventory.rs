@@ -18,7 +18,7 @@ fn main() -> anyhow::Result<()> {
             skill.source.as_deref().unwrap_or(""),
         );
     }
-    let (plugins, errors) = scan_plugins(&env);
+    let (plugins, errors) = scan_plugins(&env, &Provider::ALL);
     for plugin in plugins {
         let on = |p| state(plugin.installs.get(&p).map(|i| i.enabled));
         println!(

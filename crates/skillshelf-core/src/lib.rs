@@ -18,6 +18,20 @@ pub use ops::{
 pub use plugins::{AvailablePlugin, Plugin, PluginInstall, available_plugins, scan_plugins};
 pub use skills::{Skill, SkillInstall, scan_skills};
 
+#[cfg(test)]
+pub(crate) mod testing {
+    use std::path::Path;
+
+    /// Links the folder `link` to `target`, which may be relative to the link's parent, the way
+    /// `npx skills` links skills: a symlink, or a junction with an absolute target on Windows.
+    pub fn link_dir(target: impl AsRef<Path>, link: impl AsRef<Path>) {
+        let link = link.as_ref();
+        #[cfg(windows)]
+        let target = link.parent().unwrap().join(target);
+        crate::ops::link_dir(target.as_ref(), link).unwrap();
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Provider {
     Claude,
@@ -31,6 +45,14 @@ impl Provider {
         match self {
             Provider::Claude => "Claude",
             Provider::Codex => "Codex",
+        }
+    }
+
+    /// The product's full name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Provider::Claude => "Claude Code",
+            Provider::Codex => "Codex CLI",
         }
     }
 

@@ -1,5 +1,5 @@
 //! skillshelf's own light and dark themes, plus Base16 schemes: a bundled set and any
-//! `*.yaml` files in `~/.config/skillshelf/themes/`.
+//! `*.yaml` files in `~/.config/skillshelf/themes/` (`%APPDATA%\skillshelf\themes\` on Windows).
 
 use std::fs;
 use std::path::PathBuf;

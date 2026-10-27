@@ -1,5 +1,6 @@
-//! Settings in `~/.config/skillshelf/`: `settings.json`, plus the GitHub token in a private file
-//! of its own, so `settings.json` can live in a dotfiles repository without leaking it.
+//! Settings in `~/.config/skillshelf/` (`%APPDATA%\skillshelf\` on Windows): `settings.json`,
+//! plus the GitHub token in a private file of its own, so `settings.json` can live in a dotfiles
+//! repository without leaking it.
 
 use std::fs;
 use std::io::{ErrorKind, Write};
@@ -7,15 +8,20 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
-use skillshelf_core::{Env, gh_token};
+use skillshelf_core::{Env, Provider, gh_token};
 
 pub fn config_dir() -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME")
+    #[cfg(windows)]
+    let base = std::env::var_os("APPDATA")
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
-        .or_else(|| std::env::home_dir().map(|h| h.join(".config")))
-        .unwrap_or_default()
-        .join("skillshelf")
+        .or_else(|| std::env::home_dir().map(|h| h.join("AppData").join("Roaming")));
+    #[cfg(not(windows))]
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::home_dir().map(|h| h.join(".config")));
+    base.unwrap_or_default().join("skillshelf")
 }
 
 fn settings_path() -> PathBuf {
@@ -37,7 +43,7 @@ pub fn get(key: &str) -> Option<String> {
     load()[key].as_str().map(str::to_owned)
 }
 
-pub fn set(key: &str, value: &str) -> Result<()> {
+pub fn set(key: &str, value: impl Into<Value>) -> Result<()> {
     let mut settings = load();
     settings[key] = value.into();
     fs::create_dir_all(config_dir())?;
@@ -46,6 +52,28 @@ pub fn set(key: &str, value: &str) -> Result<()> {
         serde_json::to_string_pretty(&settings)? + "\n",
     )?;
     Ok(())
+}
+
+/// The agents skillshelf manages, in display order: none until the user turns some on.
+pub fn load_agents() -> Vec<Provider> {
+    agents_in(&load()["agents"])
+}
+
+pub fn save_agents(agents: &[Provider]) -> Result<()> {
+    set("agents", agents.iter().map(|p| p.cli()).collect::<Vec<_>>())
+}
+
+fn agents_in(saved: &Value) -> Vec<Provider> {
+    let names: Vec<&str> = saved
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    Provider::ALL
+        .into_iter()
+        .filter(|p| names.contains(&p.cli()))
+        .collect()
 }
 
 /// Where GitHub downloads get a token from.
@@ -109,7 +137,8 @@ pub fn read_token() -> Option<String> {
     (!token.is_empty()).then(|| token.to_owned())
 }
 
-/// Saves the token readable by the owner only.
+/// Saves the token readable by the owner only. On Windows the file inherits the permissions of
+/// `%APPDATA%`, which only the user (and administrators) can read.
 pub fn save_token(token: &str) -> Result<()> {
     let token = token.trim();
     ensure!(!token.is_empty(), "the token is empty");
@@ -146,11 +175,34 @@ pub fn delete_token() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::write_private;
+    use serde_json::json;
+    use skillshelf_core::Provider;
+
+    #[test]
+    fn agents_load_in_display_order_and_default_to_none() {
+        let agents = |saved| super::agents_in(&saved);
+        assert_eq!(agents(json!(null)), []);
+        assert_eq!(agents(json!("claude")), []);
+        assert_eq!(
+            agents(json!(["codex", "claude", "gemini"])),
+            [Provider::Claude, Provider::Codex]
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn settings_live_in_appdata() {
+        let appdata = std::env::var_os("APPDATA").unwrap();
+        assert_eq!(
+            super::config_dir(),
+            std::path::Path::new(&appdata).join("skillshelf")
+        );
+    }
 
     #[cfg(unix)]
     #[test]
     fn private_file_is_owner_only() {
+        use super::write_private;
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("token");

@@ -14,6 +14,23 @@ use super::change::{Change, open_change_dialog};
 use super::{SEARCH_DELAY, Selection, Shelf, divider, fact, list_body, matches, warning};
 use crate::settings::GitHubAccess;
 
+/// The skills to list when skillshelf manages only `agents`: those an agent has, or Claude can
+/// link in from the shared folder. Each keeps its installs for those agents, and the links and
+/// copies of its shared folder that other agents have, so they go with the folder on uninstall.
+pub(super) fn for_agents(skills: Vec<Skill>, agents: &[Provider]) -> Vec<Skill> {
+    skills
+        .into_iter()
+        .filter_map(|mut skill| {
+            skill
+                .installs
+                .retain(|i| agents.contains(&i.provider) || i.shared);
+            let listed = skill.installs.iter().any(|i| agents.contains(&i.provider))
+                || (agents.contains(&Provider::Claude) && skill.shared.is_some());
+            listed.then_some(skill)
+        })
+        .collect()
+}
+
 impl Shelf {
     pub(super) fn skill(&self, name: &str) -> Option<&Skill> {
         self.skills.iter().find(|s| s.name == name)
@@ -212,7 +229,7 @@ impl Shelf {
         v_flex()
             .size_full()
             .child(self.page_header("Skills", Some(rows.len()), cx))
-            .child(self.column_header(&["All", "Claude", "Codex"], cx))
+            .child(self.column_header(&self.agent_columns(), cx))
             .child(list_body("skill-list", rows, &self.list_scroll, cx))
             .into_any_element()
     }
@@ -220,27 +237,32 @@ impl Shelf {
     fn skill_row(&self, skill: &Skill, cx: &mut Context<Self>) -> AnyElement {
         let name = skill.name.clone();
         // A shared skill can be turned on for Claude by linking it in.
-        let togglable: Vec<Provider> = Provider::ALL
-            .into_iter()
+        let togglable: Vec<Provider> = self
+            .agents
+            .iter()
+            .copied()
             .filter(|&p| {
                 skill.enabled(p).is_some() || (p == Provider::Claude && skill.shared.is_some())
             })
             .collect();
         let all_on = togglable.iter().all(|&p| skill.enabled(p) == Some(true));
-        let mut switches = vec![self.switch(
-            format!("skill-all-{name}"),
-            all_on,
-            togglable.is_empty(),
-            "All providers",
-            {
-                let name = name.clone();
-                let togglable = togglable.clone();
-                cx.listener(move |this, on: &bool, window, cx| {
-                    this.set_skill_enabled(&name, &togglable, *on, window, cx)
-                })
-            },
-        )];
-        for provider in Provider::ALL {
+        let mut switches = Vec::new();
+        if self.agents.len() > 1 {
+            switches.push(self.switch(
+                format!("skill-all-{name}"),
+                all_on,
+                togglable.is_empty(),
+                "All agents",
+                {
+                    let name = name.clone();
+                    let togglable = togglable.clone();
+                    cx.listener(move |this, on: &bool, window, cx| {
+                        this.set_skill_enabled(&name, &togglable, *on, window, cx)
+                    })
+                },
+            ));
+        }
+        for &provider in &self.agents {
             let name = name.clone();
             switches.push(self.switch(
                 format!("skill-{}-{name}", provider.cli()),
@@ -285,7 +307,7 @@ impl Shelf {
             .size_full()
             .child(self.page_header("Plugins", Some(rows.len()), cx))
             .children(warnings)
-            .child(self.column_header(&["All", "Claude", "Codex"], cx))
+            .child(self.column_header(&self.agent_columns(), cx))
             .child(list_body("plugin-list", rows, &self.list_scroll, cx))
             .into_any_element()
     }
@@ -294,20 +316,19 @@ impl Shelf {
         let id = plugin.id.clone();
         let installed: Vec<Provider> = plugin.installs.keys().copied().collect();
         let all_on = plugin.installs.values().all(|i| i.enabled);
-        let mut switches = vec![self.switch(
-            format!("plugin-all-{id}"),
-            all_on,
-            false,
-            "All providers",
-            {
-                let id = id.clone();
-                let installed = installed.clone();
-                cx.listener(move |this, on: &bool, window, cx| {
-                    this.set_plugin_enabled(&id, &installed, *on, window, cx)
-                })
-            },
-        )];
-        for provider in Provider::ALL {
+        let mut switches = Vec::new();
+        if self.agents.len() > 1 {
+            switches.push(
+                self.switch(format!("plugin-all-{id}"), all_on, false, "All agents", {
+                    let id = id.clone();
+                    let installed = installed.clone();
+                    cx.listener(move |this, on: &bool, window, cx| {
+                        this.set_plugin_enabled(&id, &installed, *on, window, cx)
+                    })
+                }),
+            );
+        }
+        for &provider in &self.agents {
             let id = id.clone();
             let install = plugin.installs.get(&provider);
             switches.push(self.switch(
@@ -347,13 +368,15 @@ impl Shelf {
         let Some(env) = &self.env else {
             return div().into_any_element();
         };
-        let locations: Vec<_> = skill
+        let mut locations: Vec<_> = skill
             .installs
             .iter()
+            .filter(|install| self.agents.contains(&install.provider))
             .map(|install| {
                 let kind = match std::fs::read_link(&install.path) {
-                    Ok(target) => format!("link to {}", target.display()),
+                    Ok(target) => format!("link to {}", env.tilde(&target)),
                     Err(_) if Some(&install.path) == skill.shared.as_ref() => "shared copy".into(),
+                    Err(_) if install.shared => "copy".into(),
                     Err(_) => "folder".to_owned(),
                 };
                 let state = if install.enabled { "on" } else { "off" };
@@ -365,6 +388,11 @@ impl Shelf {
                 )
             })
             .collect();
+        if locations.is_empty()
+            && let Some(shared) = &skill.shared
+        {
+            locations.push(fact("Shared", env.tilde(shared), cx));
+        }
         let subtitle = skill.source.clone().or(skill
             .shared
             .is_none()
@@ -432,5 +460,97 @@ impl Shelf {
                     .child(v_flex().gap_1().children(installs)),
             )
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use skillshelf_core::{Provider, Skill, SkillInstall};
+
+    use super::for_agents;
+
+    fn install(provider: Provider, path: &str, shared: bool) -> SkillInstall {
+        SkillInstall {
+            provider,
+            path: PathBuf::from(path),
+            shared,
+            enabled: true,
+        }
+    }
+
+    fn skill(name: &str, shared: bool, installs: Vec<SkillInstall>) -> Skill {
+        Skill {
+            name: name.into(),
+            title: name.into(),
+            description: String::new(),
+            shared: shared.then(|| PathBuf::from(format!("agents/{name}"))),
+            source: None,
+            installs,
+        }
+    }
+
+    fn skills() -> Vec<Skill> {
+        vec![
+            // In the shared folder (Codex reads it) and linked into Claude.
+            skill(
+                "linked",
+                true,
+                vec![
+                    install(Provider::Codex, "agents/linked", true),
+                    install(Provider::Claude, "claude/linked", true),
+                ],
+            ),
+            // Only in the shared folder.
+            skill(
+                "stored",
+                true,
+                vec![install(Provider::Codex, "agents/stored", true)],
+            ),
+            // Claude's own folder, unrelated to the shared one.
+            skill(
+                "own",
+                false,
+                vec![install(Provider::Claude, "claude/own", false)],
+            ),
+        ]
+    }
+
+    fn names(skills: &[Skill]) -> Vec<&str> {
+        skills.iter().map(|s| s.name.as_str()).collect()
+    }
+
+    #[test]
+    fn lists_what_the_managed_agents_have_or_can_link() {
+        assert_eq!(
+            names(&for_agents(skills(), &Provider::ALL)),
+            ["linked", "stored", "own"]
+        );
+        assert_eq!(
+            names(&for_agents(skills(), &[Provider::Claude])),
+            ["linked", "stored", "own"]
+        );
+        assert_eq!(
+            names(&for_agents(skills(), &[Provider::Codex])),
+            ["linked", "stored"]
+        );
+        assert!(for_agents(skills(), &[]).is_empty());
+    }
+
+    #[test]
+    fn keeps_other_agents_links_to_the_shared_folder_only() {
+        let listed = for_agents(skills(), &[Provider::Claude]);
+        // The shared folder stays, so uninstalling from Claude knows to remove it.
+        assert_eq!(listed[0].installs.len(), 2);
+        let mut own = skills();
+        own[2]
+            .installs
+            .push(install(Provider::Codex, "codex/own", false));
+        let listed = for_agents(own, &[Provider::Claude]);
+        assert_eq!(
+            listed[2].installs,
+            [install(Provider::Claude, "claude/own", false)]
+        );
     }
 }

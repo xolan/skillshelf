@@ -7,7 +7,8 @@ mod licenses;
 mod palette;
 mod preferences;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use gpui_kit::assets::IconName as Lucide;
@@ -19,6 +20,7 @@ use gpui_kit::component::{
     input::{Input, InputEvent, InputState},
     menu::{DropdownMenu, PopupMenuItem},
     notification::Notification,
+    resizable::{ResizableState, h_resizable, resizable_panel},
     scroll::ScrollableElement,
     sidebar::{Sidebar, SidebarFooter, SidebarGroup, SidebarMenu, SidebarMenuItem},
     spinner::Spinner,
@@ -28,8 +30,8 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use skillshelf_core::{
-    Action as Step, AvailablePlugin, Env, FetchedSkill, Plugin, Skill, SkillHit, SkillUpdate,
-    clean_staging, execute, scan_plugins, scan_skills,
+    Action as Step, AvailablePlugin, Env, FetchedSkill, Plugin, Provider, Skill, SkillHit,
+    SkillUpdate, clean_staging, execute, scan_plugins, scan_skills,
 };
 
 use crate::settings::{self, GitHubAccess};
@@ -73,6 +75,14 @@ enum Page {
 }
 
 impl Page {
+    /// The skill and plugin pages, which have nothing to show until an agent is turned on.
+    fn needs_agents(self) -> bool {
+        matches!(
+            self,
+            Page::Skills | Page::Plugins | Page::FindSkills | Page::FindPlugins
+        )
+    }
+
     fn placeholder(self) -> &'static str {
         match self {
             Page::Skills => "Filter skills",
@@ -93,13 +103,18 @@ enum Selection {
     Hit(String),
     /// A marketplace plugin, by its id.
     Offer(String),
-    /// A section of the third-party licenses file, by index.
+    /// An asset or crate on the Licenses page, by index.
     License(usize),
 }
 
 pub struct Shelf {
     env: Option<Env>,
     page: Page,
+    /// The agents skillshelf manages, as turned on in Settings; the others are left alone.
+    agents: Vec<Provider>,
+    /// Where each agent installed on this computer shows it is, once the environment is read.
+    found: BTreeMap<Provider, PathBuf>,
+    /// Skills of the managed agents.
     skills: Vec<Skill>,
     plugins: Vec<Plugin>,
     /// Providers whose plugin list could not be read.
@@ -138,6 +153,10 @@ pub struct Shelf {
     /// The result of the last GitHub access check, e.g. the hourly request limit.
     access_status: Option<Result<SharedString, SharedString>>,
     access_task: Option<Task<()>>,
+    /// The widths dragged to: the sidebar's, and the details' beside a list and beside a license.
+    sidebar_split: Entity<ResizableState>,
+    detail_split: Entity<ResizableState>,
+    license_split: Entity<ResizableState>,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -163,6 +182,8 @@ impl Shelf {
         let mut shelf = Shelf {
             env: None,
             page: Page::Skills,
+            agents: settings::load_agents(),
+            found: BTreeMap::new(),
             skills: Vec::new(),
             plugins: Vec::new(),
             plugin_errors: Vec::new(),
@@ -192,6 +213,9 @@ impl Shelf {
             has_token: settings::read_token().is_some(),
             access_status: None,
             access_task: None,
+            sidebar_split: cx.new(|_| ResizableState::default()),
+            detail_split: cx.new(|_| ResizableState::default()),
+            license_split: cx.new(|_| ResizableState::default()),
             focus: cx.focus_handle(),
             _subscriptions: vec![subscription],
         };
@@ -204,6 +228,7 @@ impl Shelf {
         self.loading = true;
         cx.notify();
         let env = self.env.clone();
+        let agents = self.agents.clone();
         cx.spawn(async move |this, cx| {
             let loaded = cx
                 .background_spawn(async move {
@@ -215,16 +240,21 @@ impl Shelf {
                             env
                         }
                     };
-                    let skills = scan_skills(&env)?;
-                    let (plugins, errors) = scan_plugins(&env);
-                    anyhow::Ok((env, skills, plugins, errors))
+                    let found = Provider::ALL
+                        .into_iter()
+                        .filter_map(|p| Some((p, env.locate(p)?)))
+                        .collect();
+                    let skills = installed::for_agents(scan_skills(&env)?, &agents);
+                    let (plugins, errors) = scan_plugins(&env, &agents);
+                    anyhow::Ok((env, found, skills, plugins, errors))
                 })
                 .await;
             this.update(cx, |this, cx| {
                 this.loading = false;
                 match loaded {
-                    Ok((env, skills, plugins, errors)) => {
+                    Ok((env, found, skills, plugins, errors)) => {
                         this.env = Some(env);
+                        this.found = found;
                         this.skills = skills;
                         this.plugins = plugins;
                         this.plugin_errors = errors;
@@ -363,6 +393,9 @@ impl Shelf {
 
     /// What each row of the current page's list selects, top to bottom.
     fn rows(&self, cx: &App) -> Vec<Selection> {
+        if self.agents.is_empty() && self.page.needs_agents() {
+            return Vec::new();
+        }
         match self.page {
             Page::Skills => self
                 .visible_skills(cx)
@@ -491,8 +524,11 @@ impl Shelf {
                 })
                 .on_click(cx.listener(move |this, _, window, cx| this.open_page(page, window, cx)))
         };
+        // Fills its resizable panel, whose handle draws the divider.
         Sidebar::new("navigation")
-            .w(px(210.))
+            .w_full()
+            .border_r_0()
+            .line_height(icon_line())
             .child(
                 SidebarGroup::new("Installed").child(SidebarMenu::new().children([
                     item(
@@ -535,6 +571,9 @@ impl Shelf {
     }
 
     fn render_page(&self, cx: &mut Context<Self>) -> AnyElement {
+        if self.agents.is_empty() && self.page.needs_agents() {
+            return self.no_agents(cx);
+        }
         match self.page {
             Page::Skills => self.render_skills(cx),
             Page::Plugins => self.render_plugins(cx),
@@ -543,6 +582,34 @@ impl Shelf {
             Page::Settings => self.render_settings(cx),
             Page::Licenses => self.render_licenses(cx),
         }
+    }
+
+    fn no_agents(&self, cx: &mut Context<Self>) -> AnyElement {
+        empty_state(
+            IconName::Settings,
+            "No agents turned on",
+            "Turn on the agents you use in Settings. skillshelf lists and changes skills and \
+             plugins for those only.",
+            cx,
+        )
+        .child(
+            Button::new("open-settings")
+                .small()
+                .primary()
+                .label("Open Settings")
+                .on_click(
+                    cx.listener(|this, _, window, cx| this.open_page(Page::Settings, window, cx)),
+                ),
+        )
+        .into_any_element()
+    }
+
+    /// Column titles for the managed agents, after an "All" column when there are several.
+    fn agent_columns(&self) -> Vec<&'static str> {
+        let all = (self.agents.len() > 1).then_some("All");
+        all.into_iter()
+            .chain(self.agents.iter().map(|p| p.label()))
+            .collect()
     }
 
     fn page_header(
@@ -672,28 +739,40 @@ impl Shelf {
             .into_any_element()
     }
 
-    fn render_detail(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
-        let body = match self.selected.as_ref()? {
+    fn render_detail(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        Some(match self.selected.as_ref()? {
             Selection::Skill(name) => self.skill_detail(self.skill(name)?, cx),
             Selection::Plugin(id) => self.plugin_detail(self.plugin(id)?, cx),
             Selection::Hit(id) => self.hit_detail(self.hits.iter().find(|h| &h.id == id)?, cx),
             Selection::Offer(id) => self.offer_detail(self.offer(id)?, cx),
             Selection::License(ix) => self.license_detail(*ix, cx)?,
+        })
+    }
+
+    /// The page beside the selected item's details, split by a divider that drags.
+    fn render_main(&self, content: AnyElement, cx: &mut Context<Self>) -> impl IntoElement {
+        let detail = self.render_detail(cx);
+        // License texts are long lines of prose: they get more room, and a width of their own.
+        let (id, state, width) = match self.page {
+            Page::Licenses => ("license-split", &self.license_split, px(640.)),
+            _ => ("detail-split", &self.detail_split, px(400.)),
         };
-        // License texts are long lines of prose; give them more room.
-        let width = match self.selected {
-            Some(Selection::License(_)) => px(640.),
-            _ => px(400.),
-        };
-        Some(
-            v_flex()
-                .w(width)
-                .h_full()
-                .flex_shrink_0()
-                .border_l_1()
-                .border_color(cx.theme().border)
-                .child(body),
-        )
+        h_resizable(id)
+            .with_state(state)
+            .child(
+                resizable_panel()
+                    .size_range(px(240.)..Pixels::MAX)
+                    .child(div().size_full().child(content)),
+            )
+            .child(
+                resizable_panel()
+                    .visible(detail.is_some())
+                    .size(width)
+                    .size_range(px(280.)..px(900.))
+                    .fixed()
+                    .flex_none()
+                    .children(detail),
+            )
     }
 
     fn detail_header(
@@ -761,12 +840,19 @@ impl Render for Shelf {
             .text_color(cx.theme().foreground)
             .child(self.render_title_bar(cx))
             .child(
-                h_flex()
-                    .flex_1()
-                    .min_h_0()
-                    .child(self.render_sidebar(cx))
-                    .child(div().flex_1().min_w_0().h_full().child(content))
-                    .children(self.render_detail(cx)),
+                div().flex_1().min_h_0().child(
+                    h_resizable("sidebar-split")
+                        .with_state(&self.sidebar_split)
+                        .child(
+                            resizable_panel()
+                                .size(px(210.))
+                                .size_range(px(160.)..px(360.))
+                                .fixed()
+                                .flex_none()
+                                .child(self.render_sidebar(cx)),
+                        )
+                        .child(resizable_panel().child(self.render_main(content, cx))),
+                ),
             )
     }
 }
@@ -778,22 +864,30 @@ fn cell() -> Div {
     div().w(px(COLUMN)).flex().justify_center()
 }
 
+/// Line height for 14 px text beside an icon. An even 20 px puts Geist's cap height on the middle
+/// of the line, where the icon is centred; with gpui's default (1.618, so 23 px) the text sits
+/// half a pixel to a pixel above the icon.
+fn icon_line() -> Rems {
+    rems(1.25)
+}
+
+/// An icon beside text that may wrap, centred on the first line.
+fn icon_row(icon: impl IntoElement, text: impl IntoElement) -> Div {
+    h_flex()
+        .gap_2()
+        .items_start()
+        .line_height(icon_line())
+        .child(h_flex().flex_shrink_0().h(icon_line()).child(icon))
+        .child(div().flex_1().min_w_0().child(text))
+}
+
 /// A notice row above a list, e.g. a provider whose tool failed.
 fn warning(text: impl Into<SharedString>, cx: &mut Context<Shelf>) -> Div {
-    h_flex()
+    icon_row(IconName::TriangleAlert, text.into())
         .px_4()
         .py_2()
-        .gap_2()
         .text_sm()
-        .items_start()
         .bg(cx.theme().warning.opacity(0.12))
-        .child(
-            div()
-                .flex_shrink_0()
-                .pt_0p5()
-                .child(IconName::TriangleAlert),
-        )
-        .child(div().flex_1().min_w_0().child(text.into()))
 }
 
 fn list_body(

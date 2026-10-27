@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use serde::Deserialize;
 
-use crate::config::{claude_disabled_skills, codex_disabled_skills, read_json, read_toml};
+use crate::config::{
+    claude_disabled_skills, codex_disabled_skills, codex_skill_key, read_json, read_toml,
+};
 use crate::{Env, Provider};
 
 #[derive(Clone, Debug)]
@@ -29,7 +31,8 @@ pub struct SkillInstall {
     pub provider: Provider,
     /// The directory or symlink the provider reads.
     pub path: PathBuf,
-    /// The provider reads the shared copy, directly or through a symlink.
+    /// The provider reads the shared copy, directly or through a link, or reads a copy of it
+    /// that `npx skills` made where it could not link.
     pub shared: bool,
     pub enabled: bool,
 }
@@ -59,8 +62,12 @@ pub fn scan_skills(env: &Env) -> Result<Vec<Skill>> {
     let lock = read_json(&env.skill_lock())?;
     let claude_off = claude_disabled_skills(&read_json(&env.claude_settings())?);
     let codex_off = codex_disabled_skills(&read_toml(&env.codex_config())?);
-    let codex_enabled =
-        |dir: &Path| !codex_off.contains(&dir.join("SKILL.md").to_string_lossy().into_owned());
+    let codex_enabled = |dir: &Path| !codex_off.contains(&codex_skill_key(&dir.join("SKILL.md")));
+    // A folder of a locked skill's name in ~/.claude/skills is the copy `npx skills` makes where
+    // it can't link, so it is as managed as a link.
+    let managed_copy = |name: &str, path: &Path| {
+        lock["skills"].get(name).is_some() && fs::symlink_metadata(path).is_ok_and(|m| m.is_dir())
+    };
 
     let mut skills: BTreeMap<String, Skill> = BTreeMap::new();
 
@@ -87,7 +94,7 @@ pub fn scan_skills(env: &Env) -> Result<Vec<Skill>> {
         let shared = skill
             .shared
             .as_deref()
-            .is_some_and(|dir| same_dir(&path, dir));
+            .is_some_and(|dir| same_dir(&path, dir) || managed_copy(&name, &path));
         let enabled = !claude_off.contains(&skill.title);
         skill.installs.push(SkillInstall {
             provider: Provider::Claude,
@@ -158,6 +165,8 @@ pub(crate) struct Frontmatter {
 /// `name` and `description` from a SKILL.md. Falls back to a line scan, because many skills
 /// ship frontmatter that is not valid YAML (e.g. unquoted colons in the description).
 pub(crate) fn frontmatter(text: &str) -> Frontmatter {
+    // Windows PowerShell 5.1 and some Windows editors start UTF-8 files with a byte order mark.
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let Some(rest) = text.strip_prefix("---") else {
         return Frontmatter::default();
     };
@@ -180,7 +189,7 @@ pub(crate) fn frontmatter(text: &str) -> Frontmatter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::symlink;
+    use crate::testing::link_dir;
 
     fn write_skill(dir: &Path, name: &str) {
         fs::create_dir_all(dir).unwrap();
@@ -211,6 +220,21 @@ mod tests {
     }
 
     #[test]
+    fn frontmatter_after_a_byte_order_mark_and_crlf() {
+        let expected = Frontmatter {
+            name: Some("a".into()),
+            description: Some("Does a: well.".into()),
+        };
+        for text in [
+            "\u{feff}---\nname: a\ndescription: \"Does a: well.\"\n---\n",
+            "---\r\nname: a\r\ndescription: \"Does a: well.\"\r\n---\r\nbody\r\n",
+            "\u{feff}---\r\nname: a\r\ndescription: Does a: well.\r\n---\r\n",
+        ] {
+            assert_eq!(frontmatter(text), expected, "{text:?}");
+        }
+    }
+
+    #[test]
     fn scan_classifies_installs() {
         let home = tempfile::tempdir().unwrap();
         let env = Env::at(home.path());
@@ -218,19 +242,17 @@ mod tests {
         // Shared skill, linked into Claude the way `npx skills` does it.
         write_skill(&agents.join("shared"), "shared");
         fs::create_dir_all(env.claude_skills()).unwrap();
-        symlink(
+        link_dir(
             "../../.agents/skills/shared",
             env.claude_skills().join("shared"),
-        )
-        .unwrap();
+        );
         // Claude-only real directory, and a link to somewhere else (a dotfiles repo).
         write_skill(&env.claude_skills().join("local"), "local");
         write_skill(&home.path().join("dotfiles/foreign"), "foreign");
-        symlink(
+        link_dir(
             home.path().join("dotfiles/foreign"),
             env.claude_skills().join("foreign"),
-        )
-        .unwrap();
+        );
         // Codex's own dir: a skill only there, a second copy of a shared one, and Codex's
         // bundled skills, which are never listed.
         write_skill(&env.codex_skills().join("old"), "old");
@@ -241,7 +263,7 @@ mod tests {
         fs::write(
             env.codex_config(),
             format!(
-                "[[skills.config]]\npath = \"{}\"\nenabled = false\n",
+                "[[skills.config]]\npath = '{}'\nenabled = false\n",
                 agents.join("shared/SKILL.md").display()
             ),
         )
@@ -287,5 +309,28 @@ mod tests {
         assert!(get("foreign").shared.is_none());
         assert_eq!(get("old").enabled(Provider::Claude), None);
         assert_eq!(get("old").enabled(Provider::Codex), Some(true));
+    }
+
+    #[test]
+    fn scan_counts_a_copy_of_a_locked_skill_as_shared() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::at(home.path());
+        // `npx skills` copies where it can't link; only "locked" is in the lock file.
+        for name in ["locked", "unlocked"] {
+            write_skill(&env.agents_skills().join(name), name);
+            write_skill(&env.claude_skills().join(name), name);
+        }
+        fs::write(env.skill_lock(), r#"{"version":3,"skills":{"locked":{}}}"#).unwrap();
+        let skills = scan_skills(&env).unwrap();
+        let claude_shared = |n: &str| {
+            let skill = skills.iter().find(|s| s.name == n).unwrap();
+            let claude = skill
+                .installs
+                .iter()
+                .find(|i| i.provider == Provider::Claude);
+            claude.unwrap().shared
+        };
+        assert!(claude_shared("locked"));
+        assert!(!claude_shared("unlocked"));
     }
 }

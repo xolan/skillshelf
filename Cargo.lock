@@ -3292,6 +3292,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "junction"
+version = "1.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8cfc352a66ba903c23239ef51e809508b6fc2b0f90e3476ac7a9ff47e863ae95"
+dependencies = [
+ "scopeguard",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "khronos-egl"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5872,10 +5882,13 @@ checksum = "33f4fe9184a62d842c9ef383018f3306d8ba224fd9d836f56d7288308847c256"
 
 [[package]]
 name = "skillshelf"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
+ "embed-resource",
  "gpui-kit",
+ "resvg 0.46.0",
+ "serde",
  "serde_json",
  "serde_yaml_ng",
  "skillshelf-core",
@@ -5884,11 +5897,13 @@ dependencies = [
 
 [[package]]
 name = "skillshelf-core"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dunce",
  "flate2",
  "humantime",
+ "junction",
  "serde",
  "serde_json",
  "serde_yaml_ng",

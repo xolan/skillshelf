@@ -176,11 +176,12 @@ fn download(
 }
 
 /// Moves a fetched skill into `~/.agents/skills`, records it in the lock file, and exposes it to
-/// the chosen providers. Fails if the name is already taken.
+/// the chosen `providers` out of the `offered` ones. Fails if the name is already taken.
 pub fn install_skill(
     env: &Env,
     skill: &FetchedSkill,
     providers: &[Provider],
+    offered: &[Provider],
 ) -> Result<Vec<Action>> {
     let target = env.agents_skills().join(&skill.name);
     let link = env.claude_skills().join(&skill.name);
@@ -215,13 +216,14 @@ pub fn install_skill(
         },
     ];
     if link_claude {
-        actions.push(Action::Symlink {
+        actions.push(Action::Link {
             link,
             target: claude_link_target(env, &target, &skill.name),
         });
     }
-    // Codex reads ~/.agents/skills on its own, so leaving it out means turning it off there.
-    if !providers.contains(&Provider::Codex) {
+    // Codex reads ~/.agents/skills on its own, so leaving it out means turning it off there. A
+    // provider that wasn't offered is not managed here, and its config is left alone.
+    if offered.contains(&Provider::Codex) && !providers.contains(&Provider::Codex) {
         actions.push(Action::SetCodexSkill {
             skill_md: target.join("SKILL.md"),
             enabled: false,
@@ -309,27 +311,38 @@ pub fn update_skill(env: &Env, name: &str, skill: &FetchedSkill) -> Result<Vec<A
         .to_string()
         .into();
     let old = staging_root(env).join(format!("{}-old", unique()));
-    Ok(vec![
+    let mut actions = vec![
         Action::Rename {
             from: target.clone(),
             to: old.clone(),
         },
         Action::Rename {
             from: skill.dir.clone(),
-            to: target,
+            to: target.clone(),
         },
         Action::AddLock {
             name: name.to_owned(),
             entry,
         },
-        Action::Remove(old),
-    ])
+    ];
+    // A copy in ~/.claude/skills, made where `npx skills` could not link, would keep the old
+    // version.
+    let claude_copy = env.claude_skills().join(name);
+    if fs::symlink_metadata(&claude_copy).is_ok_and(|m| m.is_dir()) {
+        actions.push(Action::Remove(claude_copy.clone()));
+        actions.push(Action::Copy {
+            from: target,
+            to: claude_copy,
+        });
+    }
+    actions.push(Action::Remove(old));
+    Ok(actions)
 }
 
 /// Downloads wait here: next to `~/.agents/skills`, so installing is a rename, but outside it,
 /// so Codex never loads a skill that is only being previewed.
 pub(crate) fn staging_root(env: &Env) -> PathBuf {
-    env.home.join(".agents/.skillshelf-staging")
+    env.home.join(".agents").join(".skillshelf-staging")
 }
 
 /// Removes downloads left by an earlier run.
@@ -429,6 +442,11 @@ fn extract(archive: impl Read, folder: &str, dest: &Path) -> Result<Vec<String>>
         if rel.is_empty() {
             continue;
         }
+        ensure!(
+            rel.iter().all(|part| storable(part)),
+            "the skill has a file name Windows can't store: {}",
+            rel.join("/")
+        );
         let out = rel.iter().fold(dest.to_path_buf(), |p, part| p.join(part));
         match entry.header().entry_type() {
             tar::EntryType::Directory => fs::create_dir_all(&out)?,
@@ -458,6 +476,28 @@ fn extract(archive: impl Read, folder: &str, dest: &Path) -> Result<Vec<String>>
     );
     files.sort();
     Ok(files)
+}
+
+/// Whether Windows can store a file named `name` as it is; elsewhere every name is fine. Windows
+/// would fail on the others halfway through, or worse: `C:` or `name:stream` lead out of the
+/// folder or into a hidden stream, and a trailing dot or space is dropped, so `SKILL.md.` would
+/// overwrite `SKILL.md`.
+fn storable(name: &str) -> bool {
+    const DEVICES: &[&str] = &[
+        "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", "COM0", "COM1", "COM2", "COM3", "COM4",
+        "COM5", "COM6", "COM7", "COM8", "COM9", "COM¹", "COM²", "COM³", "LPT0", "LPT1", "LPT2",
+        "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9", "LPT¹", "LPT²", "LPT³",
+    ];
+    if !cfg!(windows) {
+        return true;
+    }
+    // Device names are taken with any extension too (`nul.txt`) on Windows 10.
+    let stem = name.split('.').next().unwrap_or(name).trim_end_matches(' ');
+    !name.ends_with(['.', ' '])
+        && !name.chars().any(|c| c < ' ' || r#"<>:"/\|?*"#.contains(c))
+        && !DEVICES
+            .iter()
+            .any(|device| stem.eq_ignore_ascii_case(device))
 }
 
 fn valid_name(name: &str) -> bool {
@@ -708,6 +748,36 @@ mod tests {
     }
 
     #[test]
+    fn refuses_names_windows_cannot_store_on_windows() {
+        for name in [
+            "C:/evil",
+            "SKILL.md:hidden",
+            "CON",
+            "nul.txt",
+            "a?b",
+            "trail.",
+            "trail ",
+        ] {
+            let dest = tempfile::tempdir().unwrap();
+            let archive = tarball(&[
+                ("repo-abc/s/SKILL.md", tar::EntryType::Regular, b"x"),
+                (&format!("repo-abc/s/{name}"), tar::EntryType::Regular, b"x"),
+            ]);
+            let result = extract(&archive[..], "s", dest.path());
+            assert_eq!(result.is_err(), cfg!(windows), "{name}");
+        }
+        // `C:evil` would be relative to the current directory on drive C.
+        assert!(!Path::new("C:evil").exists());
+        // Names elsewhere in the repository don't matter.
+        let dest = tempfile::tempdir().unwrap();
+        let archive = tarball(&[
+            ("repo-abc/s/SKILL.md", tar::EntryType::Regular, b"x"),
+            ("repo-abc/other/CON", tar::EntryType::Regular, b"x"),
+        ]);
+        assert!(extract(&archive[..], "s", dest.path()).is_ok());
+    }
+
+    #[test]
     fn install_plans_link_and_codex_opt_out() {
         let home = tempfile::tempdir().unwrap();
         let env = Env::at(home.path());
@@ -720,13 +790,18 @@ mod tests {
             skill_md: String::new(),
             files: vec!["SKILL.md".into()],
         };
-        let actions = install_skill(&env, &skill, &[Provider::Claude]).unwrap();
+        let actions = install_skill(&env, &skill, &[Provider::Claude], &Provider::ALL).unwrap();
         assert_eq!(actions.len(), 4);
+        let target = if cfg!(windows) {
+            env.agents_skills().join("s")
+        } else {
+            "../../.agents/skills/s".into()
+        };
         assert_eq!(
             actions[2],
-            Action::Symlink {
+            Action::Link {
                 link: env.claude_skills().join("s"),
-                target: "../../.agents/skills/s".into()
+                target
             }
         );
         assert_eq!(
@@ -736,8 +811,16 @@ mod tests {
                 enabled: false
             }
         );
+        // With Codex not managed, its config is not touched.
+        let claude_only = [Provider::Claude];
+        let actions = install_skill(&env, &skill, &claude_only, &claude_only).unwrap();
+        assert!(
+            !actions
+                .iter()
+                .any(|a| matches!(a, Action::SetCodexSkill { .. }))
+        );
         fs::create_dir_all(env.agents_skills().join("s")).unwrap();
-        assert!(install_skill(&env, &skill, &Provider::ALL).is_err());
+        assert!(install_skill(&env, &skill, &Provider::ALL, &Provider::ALL).is_err());
     }
 
     #[test]
@@ -785,8 +868,7 @@ mod tests {
         )
         .unwrap();
         fs::create_dir_all(env.claude_skills()).unwrap();
-        std::os::unix::fs::symlink("../../.agents/skills/s", env.claude_skills().join("s"))
-            .unwrap();
+        crate::testing::link_dir("../../.agents/skills/s", env.claude_skills().join("s"));
         let dir = staging_root(&env).join("new");
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("SKILL.md"), "new").unwrap();
@@ -816,13 +898,46 @@ mod tests {
     }
 
     #[test]
+    fn update_refreshes_a_copy_in_claude() {
+        let home = tempfile::tempdir().unwrap();
+        let env = Env::at(home.path());
+        for dir in [env.agents_skills().join("s"), env.claude_skills().join("s")] {
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("SKILL.md"), "old").unwrap();
+        }
+        fs::write(
+            env.skill_lock(),
+            r#"{"skills":{"s":{"skillPath":"SKILL.md"}}}"#,
+        )
+        .unwrap();
+        let dir = staging_root(&env).join("new");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("SKILL.md"), "new").unwrap();
+        let fetched = FetchedSkill {
+            name: "s".into(),
+            source: "o/r".into(),
+            dir,
+            skill_path: "SKILL.md".into(),
+            folder_hash: "new".into(),
+            skill_md: "new".into(),
+            files: vec!["SKILL.md".into()],
+        };
+        crate::execute(&env, &update_skill(&env, "s", &fetched).unwrap()).unwrap();
+        assert_eq!(
+            fs::read_to_string(env.claude_skills().join("s/SKILL.md")).unwrap(),
+            "new"
+        );
+        assert_eq!(fs::read_dir(staging_root(&env)).unwrap().count(), 0);
+    }
+
+    #[test]
     fn update_never_replaces_a_link() {
         let home = tempfile::tempdir().unwrap();
         let env = Env::at(home.path());
         let dotfiles = home.path().join("dotfiles/s");
         fs::create_dir_all(&dotfiles).unwrap();
         fs::create_dir_all(env.agents_skills()).unwrap();
-        std::os::unix::fs::symlink(&dotfiles, env.agents_skills().join("s")).unwrap();
+        crate::testing::link_dir(&dotfiles, env.agents_skills().join("s"));
         fs::write(env.skill_lock(), r#"{"skills":{"s":{}}}"#).unwrap();
         let fetched = FetchedSkill {
             name: "s".into(),
@@ -873,7 +988,7 @@ mod tests {
         assert_eq!(fetched.name, "find-skills");
         assert_eq!(fetched.folder_hash.len(), 40);
         assert!(fetched.files.contains(&"SKILL.md".to_owned()));
-        let actions = install_skill(&env, &fetched, &Provider::ALL).unwrap();
+        let actions = install_skill(&env, &fetched, &Provider::ALL, &Provider::ALL).unwrap();
         crate::execute(&env, &actions).unwrap();
         let skills = crate::scan_skills(&env).unwrap();
         assert_eq!(skills[0].source.as_deref(), Some("vercel-labs/skills"));
