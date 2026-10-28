@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="236" height="80" viewBox="0 0 236 80">
-  <rect width="236" height="80" rx="16" fill="#161513"/>
-  <g transform="translate(16 16) scale(0.75)">
-    <rect x="12" y="41" width="40" height="9" rx="3" fill="#ECE6DC"/>
-    <rect x="16" y="28" width="32" height="9" rx="3" fill="#B9B1A3"/>
-    <rect x="21" y="15" width="22" height="9" rx="3" fill="#E9A23B"/>
-  </g>
-  <text x="76" y="50" font-family="Inter, 'Segoe UI', system-ui, sans-serif" font-size="30" font-weight="600" fill="#ECE6DC">skill<tspan fill="#E9A23B">shelf</tspan></text>
-</svg>

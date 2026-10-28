@@ -4,11 +4,11 @@ actionlint = "1.7.12"
 
 [tasks.run]
 description = "Run the app"
-run = "cargo run -p skillshelf"
+run = "cargo run -p xolkit"
 
 [tasks.build]
 description = "Build a release binary"
-run = "cargo build --release --locked -p skillshelf"
+run = "cargo build --release --locked -p xolkit"
 
 [tasks.test]
 description = "Run all tests"
@@ -42,12 +42,12 @@ run = "python3 -I scripts/licenses.py --check"
 run_windows = "python -I scripts/licenses.py --check"
 
 [tasks.icon]
-description = "Render assets/brand/skillshelf.ico (the Windows app icon) from skillshelf.svg"
-run = "cargo run -q -p skillshelf --example icon"
+description = "Render assets/brand/xolkit.ico (the Windows app icon) from the SVGs next to it"
+run = "cargo run -q -p xolkit --example icon"
 
 [tasks.inventory]
 description = "Print the installed skills and plugins (read-only)"
-run = "cargo run -q -p skillshelf-core --example inventory"
+run = "cargo run -q -p xolkit-core --example inventory"
 
 [tasks.package]
 description = "Build a release archive for a target into dist/: a tarball, or a zip for Windows"
@@ -57,28 +57,32 @@ run = '''
 #!/usr/bin/env bash
 set -euo pipefail
 target="$usage_target"
-pkgid=$(cargo pkgid -p skillshelf)
+pkgid=$(cargo pkgid -p xolkit)
 version="${pkgid##*[#@]}"
-cargo build --release --locked -p skillshelf --target "$target"
-name="skillshelf-$version-$target"
+cargo build --release --locked -p xolkit --target "$target"
+name="xolkit-$version-$target"
 rm -rf "dist/$name"
 mkdir -p "dist/$name"
 cp README.md LICENSE THIRD_PARTY_LICENSES.md "dist/$name/"
-cp crates/skillshelf/themes/base16/LICENSE "dist/$name/LICENSE-base16-schemes"
+cp crates/xolkit/themes/base16/LICENSE "dist/$name/LICENSE-base16-schemes"
 # The embedded Geist fonts are under the OFL, which must travel with them.
-cp crates/skillshelf/fonts/OFL.txt "dist/$name/OFL-Geist.txt"
+cp crates/xolkit/fonts/OFL.txt "dist/$name/OFL-Geist.txt"
 case "$target" in
 *-windows-*)
   # The icon is built into the .exe.
-  cp "target/$target/release/skillshelf.exe" "dist/$name/"
+  cp "target/$target/release/xolkit.exe" "dist/$name/"
   archive="$name.zip"
   # Windows' own tar (bsdtar) writes zip files; Git's GNU tar can't.
   (cd dist && "$(cygpath "$SYSTEMROOT")/System32/tar.exe" -a -cf "$archive" "$name")
   ;;
 *)
-  cp "target/$target/release/skillshelf" "dist/$name/"
+  cp "target/$target/release/xolkit" "dist/$name/"
   cp -r assets/linux/. "dist/$name/"
-  cp assets/brand/skillshelf.svg "dist/$name/"
+  # The tile at large sizes, the case alone at small ones, as the Windows icon has them.
+  icons="dist/$name/icons/hicolor"
+  install -Dm644 assets/brand/xolkit.svg "$icons/scalable/apps/xolkit.svg"
+  for size in 16 24; do install -Dm644 assets/brand/xolkit-small.svg "$icons/${size}x$size/apps/xolkit.svg"; done
+  for size in 32 48; do install -Dm644 assets/brand/xolkit-glyph.svg "$icons/${size}x$size/apps/xolkit.svg"; done
   archive="$name.tar.gz"
   tar -C dist -czf "dist/$archive" "$name"
   ;;

@@ -6,7 +6,7 @@ version="$1"
 dist="$2"
 root="$(cd "$(dirname "$0")/.." && pwd)"
 sum() {
-  local file="$dist/skillshelf-$version-$1-unknown-linux-gnu.tar.gz.sha256"
+  local file="$dist/xolkit-$version-$1-unknown-linux-gnu.tar.gz.sha256"
   local hash
   hash="$(cut -d' ' -f1 "$file")"
   [[ "$hash" =~ ^[0-9a-f]{64}$ ]] || { echo "no checksum in $file" >&2; exit 1; }
