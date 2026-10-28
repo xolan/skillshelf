@@ -345,9 +345,11 @@ pub(crate) fn staging_root(env: &Env) -> PathBuf {
     env.home.join(".agents").join(".xolkit-staging")
 }
 
-/// Removes downloads left by an earlier run.
+/// Removes downloads left by an earlier run, also where skillshelf, the app's name before 2.0, kept
+/// them.
 pub fn clean_staging(env: &Env) {
     let _ = fs::remove_dir_all(staging_root(env));
+    let _ = fs::remove_dir_all(env.home.join(".agents").join(".skillshelf-staging"));
 }
 
 #[derive(Deserialize)]

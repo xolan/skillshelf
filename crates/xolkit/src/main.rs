@@ -7,7 +7,7 @@ mod settings;
 mod shelf;
 mod theme;
 
-use gpui_kit::component::TitleBar;
+use gpui_kit::component::{TitleBar, WindowExt, notification::Notification};
 use gpui_kit::*;
 
 use crate::shelf::Shelf;
@@ -15,7 +15,7 @@ use crate::shelf::Shelf;
 actions!(xolkit, [Quit]);
 
 fn main() {
-    settings::migrate();
+    let migrated = settings::migrate();
     gpui_kit::application()
         .with_assets(assets::Assets)
         .run(|cx| {
@@ -41,10 +41,17 @@ fn main() {
                 app_id: Some("xolkit".into()),
                 ..TitleBar::window_options()
             };
-            gpui_kit::open_window(options, cx, |window, cx| {
+            let (window, _) = gpui_kit::open_window(options, cx, |window, cx| {
                 theme::init(window, cx);
                 cx.new(|cx| Shelf::new(window, cx))
             })
             .expect("failed to open window");
+            if let Err(message) = migrated {
+                eprintln!("xolkit: {message}");
+                let _ = window.update(cx, |_, window, cx| {
+                    // It says what to do, so it stays until closed.
+                    window.push_notification(Notification::error(message).autohide(false), cx)
+                });
+            }
         });
 }
