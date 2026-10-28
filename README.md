@@ -99,8 +99,9 @@ installs, and links skills into Claude Code with directory junctions, as `npx sk
 ### Upgrading from skillshelf
 
 xolkit moves skillshelf's settings, profiles and saved token to its own folder the first time it
-starts (see [Where it keeps its files](#where-it-keeps-its-files)). Quit skillshelf first, or the
-move can fail and xolkit starts with fresh settings. Then remove the old app yourself:
+starts (see [Where it keeps its files](#where-it-keeps-its-files)). Quit skillshelf first: changes it
+saves later go to its old folder, and on Windows an open skillshelf can stop the move, so xolkit
+starts with fresh settings. Then remove the old app yourself:
 `sudo pacman -R skillshelf-bin` for the Arch package (installing `xolkit-bin` offers to do it),
 or for the tarball:
 
