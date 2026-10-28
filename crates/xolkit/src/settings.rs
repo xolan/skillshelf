@@ -53,9 +53,6 @@ fn move_dir(old: &Path, new: &Path) -> Result<bool> {
     if new.exists() || !old.is_dir() {
         return Ok(false);
     }
-    if let Some(parent) = new.parent() {
-        fs::create_dir_all(parent)?;
-    }
     fs::rename(old, new)?;
     Ok(true)
 }
