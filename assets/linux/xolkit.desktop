@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=xolkit
+Comment=Manage agent skills and plugins
+Exec=xolkit
+Icon=xolkit
+Categories=Development;
+Terminal=false
+StartupWMClass=xolkit

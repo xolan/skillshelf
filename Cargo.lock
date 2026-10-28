@@ -5881,39 +5881,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33f4fe9184a62d842c9ef383018f3306d8ba224fd9d836f56d7288308847c256"
 
 [[package]]
-name = "skillshelf"
-version = "1.1.0"
-dependencies = [
- "anyhow",
- "embed-resource",
- "gpui-kit",
- "resvg 0.46.0",
- "serde",
- "serde_json",
- "serde_yaml_ng",
- "skillshelf-core",
- "tempfile",
-]
-
-[[package]]
-name = "skillshelf-core"
-version = "1.1.0"
-dependencies = [
- "anyhow",
- "dunce",
- "flate2",
- "humantime",
- "junction",
- "serde",
- "serde_json",
- "serde_yaml_ng",
- "tar",
- "tempfile",
- "toml_edit 0.25.17+spec-1.1.0",
- "ureq",
-]
-
-[[package]]
 name = "skrifa"
 version = "0.40.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8152,6 +8119,39 @@ name = "xmlwriter"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
+
+[[package]]
+name = "xolkit"
+version = "2.0.0"
+dependencies = [
+ "anyhow",
+ "embed-resource",
+ "gpui-kit",
+ "resvg 0.46.0",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "tempfile",
+ "xolkit-core",
+]
+
+[[package]]
+name = "xolkit-core"
+version = "2.0.0"
+dependencies = [
+ "anyhow",
+ "dunce",
+ "flate2",
+ "humantime",
+ "junction",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "tar",
+ "tempfile",
+ "toml_edit 0.25.17+spec-1.1.0",
+ "ureq",
+]
 
 [[package]]
 name = "y4m"

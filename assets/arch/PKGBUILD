@@ -2,14 +2,14 @@
 # binary. Each release attaches this file with its version and checksums filled in; build it in an
 # empty folder with `makepkg -si`.
 
-pkgname=skillshelf-bin
+pkgname=xolkit-bin
 _version=@VERSION@
 # pacman versions can't hold hyphens, which pre-release versions use.
 pkgver=${_version//-/_}
 pkgrel=1
 pkgdesc='Desktop app for managing agent skills and plugins for Claude Code and Codex CLI'
 arch=('x86_64' 'aarch64')
-url='https://github.com/xolan/skillshelf'
+url='https://github.com/xolan/xolkit'
 license=('MIT' 'OFL-1.1')
 # libvulkan and libwayland-client are loaded at run time, so the binary doesn't list them.
 depends=(
@@ -28,19 +28,19 @@ optdepends=(
   'openai-codex: manage Codex CLI skills and plugins'
   'github-cli: sign in to GitHub for skill downloads'
 )
-provides=('skillshelf')
-conflicts=('skillshelf')
+provides=('xolkit')
+conflicts=('xolkit')
 options=('!debug')
-source_x86_64=("$url/releases/download/v$_version/skillshelf-$_version-x86_64-unknown-linux-gnu.tar.gz")
-source_aarch64=("$url/releases/download/v$_version/skillshelf-$_version-aarch64-unknown-linux-gnu.tar.gz")
+source_x86_64=("$url/releases/download/v$_version/xolkit-$_version-x86_64-unknown-linux-gnu.tar.gz")
+source_aarch64=("$url/releases/download/v$_version/xolkit-$_version-aarch64-unknown-linux-gnu.tar.gz")
 sha256sums_x86_64=('@SHA256_X86_64@')
 sha256sums_aarch64=('@SHA256_AARCH64@')
 
 package() {
-  cd "skillshelf-$_version-$CARCH-unknown-linux-gnu"
-  install -Dm755 skillshelf -t "$pkgdir/usr/bin/"
-  install -Dm644 skillshelf.desktop -t "$pkgdir/usr/share/applications/"
-  install -Dm644 skillshelf.svg -t "$pkgdir/usr/share/icons/hicolor/scalable/apps/"
+  cd "xolkit-$_version-$CARCH-unknown-linux-gnu"
+  install -Dm755 xolkit -t "$pkgdir/usr/bin/"
+  install -Dm644 xolkit.desktop -t "$pkgdir/usr/share/applications/"
+  find icons -type f -exec install -Dm644 {} "$pkgdir/usr/share/{}" \;
   install -Dm644 README.md -t "$pkgdir/usr/share/doc/$pkgname/"
   install -Dm644 LICENSE LICENSE-base16-schemes OFL-Geist.txt THIRD_PARTY_LICENSES.md \
     -t "$pkgdir/usr/share/licenses/$pkgname/"

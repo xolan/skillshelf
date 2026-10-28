@@ -1,6 +1,11 @@
-<p align="center"><img src="assets/brand/skillshelf-wordmark.svg" alt="skillshelf" width="236"></p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/xolkit-wordmark.svg">
+    <img src="assets/brand/xolkit-wordmark-light.svg" alt="xolkit" width="210">
+  </picture>
+</p>
 
-# skillshelf
+# xolkit
 
 A desktop app for managing agent skills and plugins for Claude Code and Codex CLI.
 
@@ -22,13 +27,13 @@ Runs on Linux and Windows. There is no macOS build.
   later), a Wayland or X11 session, and working GPU drivers.
 - Windows: Windows 10 or 11, x64 or Arm64.
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`), [Codex
-  CLI](https://github.com/openai/codex) (`codex`), or both, on your `PATH`. skillshelf runs them to
+  CLI](https://github.com/openai/codex) (`codex`), or both, on your `PATH`. xolkit runs them to
   install and remove plugins. Turning skills on and off edits their config files directly.
 - Optional: the [GitHub CLI](https://cli.github.com) (`gh`), signed in with `gh auth login`.
-  skillshelf asks it for a token when it downloads skills from GitHub. Without it, pick anonymous
+  xolkit asks it for a token when it downloads skills from GitHub. Without it, pick anonymous
   access (60 requests an hour) or paste a token under Settings → GitHub access.
 
-skillshelf talks to `skills.sh`, `api.github.com`, `codeload.github.com` and
+xolkit talks to `skills.sh`, `api.github.com`, `codeload.github.com` and
 `raw.githubusercontent.com`.
 
 ## Install
@@ -38,38 +43,38 @@ for Arch Linux, each with a `.sha256` checksum file.
 
 ### Linux
 
-Download `skillshelf-<version>-<arch>-unknown-linux-gnu.tar.gz` and its `.sha256` from
-[Releases](https://github.com/xolan/skillshelf/releases), where `<arch>` is `x86_64` or `aarch64`
+Download `xolkit-<version>-<arch>-unknown-linux-gnu.tar.gz` and its `.sha256` from
+[Releases](https://github.com/xolan/xolkit/releases), where `<arch>` is `x86_64` or `aarch64`
 (`uname -m` tells you which). In the folder you downloaded them to, set `version` to the release
 you picked and run:
 
 ```bash
-version=1.1.0
-name=skillshelf-$version-$(uname -m)-unknown-linux-gnu
+version=2.0.0
+name=xolkit-$version-$(uname -m)-unknown-linux-gnu
 sha256sum -c "$name.tar.gz.sha256" &&
   tar -xzf "$name.tar.gz" &&
-  install -Dm755 "$name/skillshelf" ~/.local/bin/skillshelf &&
-  install -Dm644 "$name/skillshelf.desktop" ~/.local/share/applications/skillshelf.desktop &&
-  install -Dm644 "$name/skillshelf.svg" ~/.local/share/icons/hicolor/scalable/apps/skillshelf.svg
+  install -Dm755 "$name/xolkit" ~/.local/bin/xolkit &&
+  install -Dm644 "$name/xolkit.desktop" ~/.local/share/applications/xolkit.desktop &&
+  cp -r "$name/icons/." ~/.local/share/icons/
 ```
 
 If the checksum doesn't match, nothing is installed.
 
-The desktop entry starts `skillshelf` from your `PATH`. If it doesn't show in your app menu, or
+The desktop entry starts `xolkit` from your `PATH`. If it doesn't show in your app menu, or
 won't start from there, check that `~/.local/bin` is on the `PATH` of your desktop session, not
 only your shell's, and log out and back in.
 
 ### Arch Linux
 
 On Arch and other pacman-based distributions, download `PKGBUILD` and `PKGBUILD.sha256` from
-[Releases](https://github.com/xolan/skillshelf/releases) into an empty folder, and in that folder
+[Releases](https://github.com/xolan/xolkit/releases) into an empty folder, and in that folder
 run:
 
 ```bash
 sha256sum -c PKGBUILD.sha256 && makepkg -si
 ```
 
-This builds a `skillshelf-bin` package from the release's prebuilt binary, checks the tarball
+This builds a `xolkit-bin` package from the release's prebuilt binary, checks the tarball
 against the checksum in the `PKGBUILD`, and installs it with pacman, which pulls in the libraries it
 needs. If you have no Vulkan driver yet, pacman asks you to pick the one for your GPU, such as
 `vulkan-radeon`, `vulkan-intel` or `nvidia-utils`.
@@ -79,26 +84,26 @@ If you installed from the tarball before, remove that copy first (the first `rm`
 
 ### Windows
 
-Download `skillshelf-<version>-x86_64-pc-windows-msvc.zip` from
-[Releases](https://github.com/xolan/skillshelf/releases) (`aarch64` for Arm PCs), extract it
-somewhere it can stay, such as `%LOCALAPPDATA%\Programs\skillshelf`, and run `skillshelf.exe`. To
-start it from the Start menu, right-click `skillshelf.exe` and choose Pin to Start.
+Download `xolkit-<version>-x86_64-pc-windows-msvc.zip` from
+[Releases](https://github.com/xolan/xolkit/releases) (`aarch64` for Arm PCs), extract it
+somewhere it can stay, such as `%LOCALAPPDATA%\Programs\xolkit`, and run `xolkit.exe`. To
+start it from the Start menu, right-click `xolkit.exe` and choose Pin to Start.
 
 The executable isn't signed yet, so on first launch SmartScreen says "Windows protected your PC":
 choose More info, then Run anyway.
 
-skillshelf finds `claude`, `codex` and `gh` on your `PATH`, including the `.cmd` files npm
+xolkit finds `claude`, `codex` and `gh` on your `PATH`, including the `.cmd` files npm
 installs, and links skills into Claude Code with directory junctions, as `npx skills` does.
 
 ### First run
 
-Open Settings and turn on the agents you want skillshelf to manage. Until you do, it leaves
+Open Settings and turn on the agents you want xolkit to manage. Until you do, it leaves
 their skills, plugins and config files alone.
 
 ## Where it keeps its files
 
-skillshelf's own files are in `~/.config/skillshelf/` (`$XDG_CONFIG_HOME/skillshelf/` if you set
-it), or `%APPDATA%\skillshelf\` on Windows:
+xolkit's own files are in `~/.config/xolkit/` (`$XDG_CONFIG_HOME/xolkit/` if you set
+it), or `%APPDATA%\xolkit\` on Windows:
 
 | File | What it holds |
 | --- | --- |
@@ -118,27 +123,27 @@ It also changes files that belong to the agents and to `npx skills`:
 
 `$CLAUDE_CONFIG_DIR` and `$CODEX_HOME` move `~/.claude` and `~/.codex`, as they do for the agents.
 
-Downloads wait in `~/.agents/.skillshelf-staging/` until you install them, and skillshelf clears
+Downloads wait in `~/.agents/.xolkit-staging/` until you install them, and xolkit clears
 that folder each time it starts.
 
 ## Uninstall
 
-On Linux, if you installed the Arch package, run `sudo pacman -R skillshelf-bin` in place of the
-first `rm` command, which removes the binary, desktop entry and icon:
+On Linux, if you installed the Arch package, run `sudo pacman -R xolkit-bin` in place of the
+first `rm` command, which removes the binary, desktop entry and icons:
 
 ```bash
-rm ~/.local/bin/skillshelf \
-  ~/.local/share/applications/skillshelf.desktop \
-  ~/.local/share/icons/hicolor/scalable/apps/skillshelf.svg
-rm -rf "${XDG_CONFIG_HOME:-$HOME/.config}/skillshelf"   # settings, profiles and saved token
-rm -rf ~/.agents/.skillshelf-staging
+rm ~/.local/bin/xolkit \
+  ~/.local/share/applications/xolkit.desktop \
+  ~/.local/share/icons/hicolor/*/apps/xolkit.svg
+rm -rf "${XDG_CONFIG_HOME:-$HOME/.config}/xolkit"   # settings, profiles and saved token
+rm -rf ~/.agents/.xolkit-staging
 ```
 
 On Windows, delete the folder you extracted, unpin it from Start, and delete
-`%APPDATA%\skillshelf` and `%USERPROFILE%\.agents\.skillshelf-staging`.
+`%APPDATA%\xolkit` and `%USERPROFILE%\.agents\.xolkit-staging`.
 
-Skills and plugins you installed with skillshelf stay installed, along with the agents' config
-files. Remove them in skillshelf first if you don't want them.
+Skills and plugins you installed with xolkit stay installed, along with the agents' config
+files. Remove them in xolkit first if you don't want them.
 
 ## Keyboard
 
@@ -154,8 +159,8 @@ files. Remove them in skillshelf first if you don't want them.
 
 ## Themes
 
-skillshelf ships its own light and dark themes and a set of Base16 schemes. Drop more Base16
-scheme files (`*.yaml`) into the `themes` folder in skillshelf's config folder (see [Where it
+xolkit ships its own light and dark themes and a set of Base16 schemes. Drop more Base16
+scheme files (`*.yaml`) into the `themes` folder in xolkit's config folder (see [Where it
 keeps its files](#where-it-keeps-its-files)) and pick them under Settings → Theme, or from the
 command palette (`Ctrl+K`).
 
@@ -185,8 +190,8 @@ You also need:
 Then:
 
 ```bash
-git clone https://github.com/xolan/skillshelf.git
-cd skillshelf
+git clone https://github.com/xolan/xolkit.git
+cd xolkit
 mise trust
 mise install
 mise run run
@@ -203,10 +208,10 @@ mise run run
 | `mise run package <target>` | Build a release archive into `dist/` for the host's own platform: a tarball on Linux, a zip on Windows |
 | `mise run inventory` | Print installed skills and plugins (read-only) |
 | `mise run licenses` | Regenerate `THIRD_PARTY_LICENSES.md` and the app's `licenses.json` after changing dependencies |
-| `mise run icon` | Render the Windows app icon from `assets/brand/skillshelf.svg` |
+| `mise run icon` | Render the Windows app icon from the SVGs in `assets/brand/` |
 
 A few tests call skills.sh and GitHub, so they are skipped by default. Run them with
-`mise exec -- cargo test -p skillshelf-core --locked -- --ignored`.
+`mise exec -- cargo test -p xolkit-core --locked -- --ignored`.
 
 ## Contributing
 
