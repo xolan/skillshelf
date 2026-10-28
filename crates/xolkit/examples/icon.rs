@@ -34,7 +34,7 @@ fn main() -> anyhow::Result<()> {
         resvg::render(tree, transform, &mut pixmap.as_mut());
         // PNG keeps the large image small; everything reads bitmaps at the smaller sizes.
         let image = if size >= 256 {
-            pixmap.encode_png()?
+            pixmap.encode_png().context("encoding the 256 px image")?
         } else {
             bitmap(&pixmap)
         };
