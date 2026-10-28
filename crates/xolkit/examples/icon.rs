@@ -13,8 +13,9 @@ const SIZES: [u32; 8] = [16, 20, 24, 32, 40, 48, 64, 256];
 fn main() -> anyhow::Result<()> {
     let brand = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/brand");
     let load = |file: &str| -> anyhow::Result<usvg::Tree> {
-        let svg = std::fs::read(brand.join(file))?;
-        Ok(usvg::Tree::from_data(&svg, &usvg::Options::default())?)
+        let svg = std::fs::read(brand.join(file)).with_context(|| format!("reading {file}"))?;
+        usvg::Tree::from_data(&svg, &usvg::Options::default())
+            .with_context(|| format!("parsing {file}"))
     };
     let small = load("xolkit-small.svg")?;
     let glyph = load("xolkit-glyph.svg")?;
