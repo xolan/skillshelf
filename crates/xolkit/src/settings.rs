@@ -1,6 +1,6 @@
-//! Settings in `~/.config/xolkit/` (`%APPDATA%\xolkit\` on Windows): `settings.json`
-//! (with the profiles, see [`crate::profiles`]), plus the GitHub token in a private file of its own, so `settings.json` can live in a dotfiles
-//! repository without leaking it.
+//! Settings in `~/.config/xolkit/` (`%APPDATA%\xolkit\` on Windows): `settings.json` (with the
+//! profiles, see [`crate::profiles`]), plus the GitHub token in a private file of its own, so
+//! `settings.json` can live in a dotfiles repository without leaking it.
 
 use std::fs;
 use std::io::{ErrorKind, Write};

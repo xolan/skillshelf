@@ -45,7 +45,7 @@ for Arch Linux, each with a `.sha256` checksum file.
 ### Linux
 
 Download `xolkit-<version>-<arch>-unknown-linux-gnu.tar.gz` and its `.sha256` from
-[Releases](https://github.com/xolan/skillshelf/releases), where `<arch>` is `x86_64` or `aarch64`
+[Releases](https://github.com/xolan/xolkit/releases), where `<arch>` is `x86_64` or `aarch64`
 (`uname -m` tells you which). In the folder you downloaded them to, set `version` to the release
 you picked and run:
 
@@ -68,7 +68,7 @@ only your shell's, and log out and back in.
 ### Arch Linux
 
 On Arch and other pacman-based distributions, download `PKGBUILD` and `PKGBUILD.sha256` from
-[Releases](https://github.com/xolan/skillshelf/releases) into an empty folder, and in that folder
+[Releases](https://github.com/xolan/xolkit/releases) into an empty folder, and in that folder
 run:
 
 ```bash
@@ -86,7 +86,7 @@ If you installed from the tarball before, remove that copy first (the first `rm`
 ### Windows
 
 Download `xolkit-<version>-x86_64-pc-windows-msvc.zip` from
-[Releases](https://github.com/xolan/skillshelf/releases) (`aarch64` for Arm PCs), extract it
+[Releases](https://github.com/xolan/xolkit/releases) (`aarch64` for Arm PCs), extract it
 somewhere it can stay, such as `%LOCALAPPDATA%\Programs\xolkit`, and run `xolkit.exe`. To
 start it from the Start menu, right-click `xolkit.exe` and choose Pin to Start.
 
@@ -99,7 +99,8 @@ installs, and links skills into Claude Code with directory junctions, as `npx sk
 ### Upgrading from skillshelf
 
 xolkit moves skillshelf's settings, profiles and saved token to its own folder the first time it
-starts (see [Where it keeps its files](#where-it-keeps-its-files)). Remove the old app yourself:
+starts (see [Where it keeps its files](#where-it-keeps-its-files)). Quit skillshelf first, or the
+move can fail and xolkit starts with fresh settings. Then remove the old app yourself:
 `sudo pacman -R skillshelf-bin` for the Arch package (installing `xolkit-bin` offers to do it),
 or for the tarball:
 
@@ -107,9 +108,11 @@ or for the tarball:
 rm ~/.local/bin/skillshelf \
   ~/.local/share/applications/skillshelf.desktop \
   ~/.local/share/icons/hicolor/scalable/apps/skillshelf.svg
+rm -rf ~/.agents/.skillshelf-staging
 ```
 
-On Windows, delete the skillshelf folder and unpin it from Start.
+On Windows, delete the skillshelf folder and `%USERPROFILE%\.agents\.skillshelf-staging`, and
+unpin it from Start.
 
 ### First run
 
@@ -206,8 +209,8 @@ You also need:
 Then:
 
 ```bash
-git clone https://github.com/xolan/skillshelf.git
-cd skillshelf
+git clone https://github.com/xolan/xolkit.git
+cd xolkit
 mise trust
 mise install
 mise run run

@@ -9,7 +9,7 @@ pkgver=${_version//-/_}
 pkgrel=1
 pkgdesc='Desktop app for managing agent skills and plugins for Claude Code and Codex CLI'
 arch=('x86_64' 'aarch64')
-url='https://github.com/xolan/skillshelf'
+url='https://github.com/xolan/xolkit'
 license=('MIT' 'OFL-1.1')
 # libvulkan and libwayland-client are loaded at run time, so the binary doesn't list them.
 depends=(

@@ -81,7 +81,7 @@ case "$target" in
   # The tile at large sizes, the case alone at small ones, as the Windows icon has them.
   icons="dist/$name/icons/hicolor"
   install -Dm644 assets/brand/xolkit.svg "$icons/scalable/apps/xolkit.svg"
-  for size in 16 24; do install -Dm644 assets/brand/xolkit-small.svg "$icons/${size}x$size/apps/xolkit.svg"; done
+  for size in 16 22 24; do install -Dm644 assets/brand/xolkit-small.svg "$icons/${size}x$size/apps/xolkit.svg"; done
   for size in 32 48; do install -Dm644 assets/brand/xolkit-glyph.svg "$icons/${size}x$size/apps/xolkit.svg"; done
   archive="$name.tar.gz"
   tar -C dist -czf "dist/$archive" "$name"
