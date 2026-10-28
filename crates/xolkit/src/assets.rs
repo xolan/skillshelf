@@ -20,10 +20,10 @@ gpui_kit::assets::icon_assets!(
     [Puzzle, Store, Trash, Download, Lock, Layers, Pencil]
 );
 
-/// The logo for the title bar, for dark and light themes: the case alone, drawn for 16 px.
-pub const LOGO: &str = "brand/xolkit-small.svg";
+// The title bar's logo, the case alone drawn at 16 px, in its dark-theme and light-theme versions.
+pub const LOGO_DARK: &str = "brand/xolkit-small.svg";
 pub const LOGO_LIGHT: &str = "brand/xolkit-small-light.svg";
-const LOGO_SVG: &[u8] = include_bytes!("../../../assets/brand/xolkit-small.svg");
+const LOGO_DARK_SVG: &[u8] = include_bytes!("../../../assets/brand/xolkit-small.svg");
 const LOGO_LIGHT_SVG: &[u8] = include_bytes!("../../../assets/brand/xolkit-small-light.svg");
 
 pub struct Assets;
@@ -31,7 +31,7 @@ pub struct Assets;
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
         match path {
-            LOGO => return Ok(Some(Cow::Borrowed(LOGO_SVG))),
+            LOGO_DARK => return Ok(Some(Cow::Borrowed(LOGO_DARK_SVG))),
             LOGO_LIGHT => return Ok(Some(Cow::Borrowed(LOGO_LIGHT_SVG))),
             _ => {}
         }

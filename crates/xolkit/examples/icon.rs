@@ -12,20 +12,25 @@ const SIZES: [u32; 8] = [16, 20, 24, 32, 40, 48, 64, 256];
 
 fn main() -> anyhow::Result<()> {
     let brand = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/brand");
+    let load = |file: &str| -> anyhow::Result<usvg::Tree> {
+        let svg = std::fs::read(brand.join(file))?;
+        Ok(usvg::Tree::from_data(&svg, &usvg::Options::default())?)
+    };
+    let small = load("xolkit-small.svg")?;
+    let glyph = load("xolkit-glyph.svg")?;
+    let tile = load("xolkit.svg")?;
     let mut images = Vec::new();
     for size in SIZES {
-        // The tile only on the large sizes; the case alone below, drawn on its own grid at 16–24.
-        let file = match size {
-            ..=24 => "xolkit-small.svg",
-            25..=48 => "xolkit-glyph.svg",
-            _ => "xolkit.svg",
+        // The tile only on the large sizes; the case alone below, drawn at 16 px for 16–24.
+        let tree = match size {
+            ..=24 => &small,
+            25..=48 => &glyph,
+            _ => &tile,
         };
-        let svg = std::fs::read(brand.join(file))?;
-        let tree = usvg::Tree::from_data(&svg, &usvg::Options::default())?;
         let mut pixmap = tiny_skia::Pixmap::new(size, size).context("empty icon size")?;
         let scale = size as f32 / tree.size().width();
         let transform = tiny_skia::Transform::from_scale(scale, scale);
-        resvg::render(&tree, transform, &mut pixmap.as_mut());
+        resvg::render(tree, transform, &mut pixmap.as_mut());
         // PNG keeps the large image small; everything reads bitmaps at the smaller sizes.
         let image = if size >= 256 {
             pixmap.encode_png()?

@@ -517,7 +517,7 @@ impl Shelf {
                         .gap_2()
                         .child(
                             img(if cx.theme().is_dark() {
-                                assets::LOGO
+                                assets::LOGO_DARK
                             } else {
                                 assets::LOGO_LIGHT
                             })
