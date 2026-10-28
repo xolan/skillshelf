@@ -40,7 +40,7 @@ fn main() -> anyhow::Result<()> {
         };
         images.push((size, image));
     }
-    std::fs::write(brand.join("xolkit.ico"), ico(&images))?;
+    std::fs::write(brand.join("xolkit.ico"), ico(&images)).context("writing xolkit.ico")?;
     Ok(())
 }
 
