@@ -29,8 +29,7 @@ optdepends=(
   'github-cli: sign in to GitHub for skill downloads'
 )
 provides=('xolkit')
-# skillshelf-bin is this package under the app's old name.
-conflicts=('xolkit' 'skillshelf-bin')
+conflicts=('xolkit')
 options=('!debug')
 source_x86_64=("$url/releases/download/v$_version/xolkit-$_version-x86_64-unknown-linux-gnu.tar.gz")
 source_aarch64=("$url/releases/download/v$_version/xolkit-$_version-aarch64-unknown-linux-gnu.tar.gz")

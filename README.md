@@ -7,8 +7,7 @@
 
 # xolkit
 
-A desktop app for managing agent skills and plugins for Claude Code and Codex CLI. It was called
-skillshelf before 2.0; see [Upgrading from skillshelf](#upgrading-from-skillshelf).
+A desktop app for managing agent skills and plugins for Claude Code and Codex CLI.
 
 - Browse, enable, disable and uninstall installed skills and plugins, per provider or for all at once.
 - Search [skills.sh](https://skills.sh) for skills and provider marketplaces for plugins, and install them.
@@ -96,26 +95,6 @@ choose More info, then Run anyway.
 xolkit finds `claude`, `codex` and `gh` on your `PATH`, including the `.cmd` files npm
 installs, and links skills into Claude Code with directory junctions, as `npx skills` does.
 
-### Upgrading from skillshelf
-
-xolkit moves skillshelf's settings, profiles and saved token to its own folder the first time it
-starts (see [Where it keeps its files](#where-it-keeps-its-files)), and clears skillshelf's old
-downloads folder. Quit skillshelf first: changes it saves later go to its old folder, and on
-Windows an open skillshelf can stop the move, which xolkit then reports when it opens. If your
-`settings.json` is shared through a dotfiles repository, xolkit renames its own theme in there, so
-machines still on skillshelf fall back to their default theme until they upgrade.
-
-Then remove the old app yourself: `sudo pacman -R skillshelf-bin` for the Arch package
-(installing `xolkit-bin` offers to do it), or for the tarball:
-
-```bash
-rm ~/.local/bin/skillshelf \
-  ~/.local/share/applications/skillshelf.desktop \
-  ~/.local/share/icons/hicolor/scalable/apps/skillshelf.svg
-```
-
-On Windows, delete the skillshelf folder and unpin it from Start.
-
 ### First run
 
 Open Settings and turn on the agents you want xolkit to manage. Until you do, it leaves
@@ -150,7 +129,7 @@ that folder each time it starts.
 ## Uninstall
 
 On Linux, if you installed the Arch package, run `sudo pacman -R xolkit-bin` in place of the
-first `rm` command, which removes the binary, desktop entry and icon:
+first `rm` command, which removes the binary, desktop entry and icons:
 
 ```bash
 rm ~/.local/bin/xolkit \

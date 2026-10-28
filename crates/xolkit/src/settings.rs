@@ -24,48 +24,6 @@ pub fn config_dir() -> PathBuf {
     base.unwrap_or_default().join("xolkit")
 }
 
-/// Moves the settings of skillshelf, as the app was called before 2.0, to where xolkit keeps them,
-/// the first time xolkit starts. The saved theme follows the rename of the app's own themes. The
-/// error says what to do when the move fails, for the window to show.
-pub fn migrate() -> Result<(), String> {
-    let new = config_dir();
-    let old = new.with_file_name("skillshelf");
-    match move_dir(&old, &new) {
-        Ok(false) => return Ok(()),
-        Ok(true) => {}
-        Err(e) => {
-            return Err(format!(
-                "Could not move your skillshelf settings from {} to {}: {e:#}. Quit skillshelf \
-                 and xolkit, then put that folder in place of the xolkit one.",
-                old.display(),
-                new.display()
-            ));
-        }
-    }
-    if let Some(theme) = get("theme").and_then(|name| renamed_theme(&name))
-        && let Err(e) = set("theme", theme)
-    {
-        eprintln!("xolkit: could not save the theme: {e:#}");
-    }
-    Ok(())
-}
-
-/// Renames `old` to `new` if `old` is there and `new` is missing or an empty folder; true if it
-/// did.
-fn move_dir(old: &Path, new: &Path) -> Result<bool> {
-    // remove_dir only removes an empty folder, so settings xolkit already has stay.
-    if !old.is_dir() || (new.exists() && fs::remove_dir(new).is_err()) {
-        return Ok(false);
-    }
-    fs::rename(old, new)?;
-    Ok(true)
-}
-
-fn renamed_theme(name: &str) -> Option<String> {
-    name.strip_prefix("skillshelf ")
-        .map(|mode| format!("xolkit {mode}"))
-}
-
 fn settings_path() -> PathBuf {
     config_dir().join("settings.json")
 }
@@ -227,36 +185,6 @@ mod tests {
             agents(json!(["codex", "claude", "gemini"])),
             [Provider::Claude, Provider::Codex]
         );
-    }
-
-    #[test]
-    fn old_settings_move_once() {
-        let dir = tempfile::tempdir().unwrap();
-        let (old, new) = (dir.path().join("skillshelf"), dir.path().join("xolkit"));
-        assert!(!super::move_dir(&old, &new).unwrap());
-        std::fs::create_dir(&old).unwrap();
-        std::fs::write(old.join("settings.json"), "{}").unwrap();
-        // An empty xolkit folder doesn't stop the move.
-        std::fs::create_dir(&new).unwrap();
-        assert!(super::move_dir(&old, &new).unwrap());
-        assert!(!old.exists());
-        assert_eq!(
-            std::fs::read_to_string(new.join("settings.json")).unwrap(),
-            "{}"
-        );
-        // A later skillshelf folder is left alone once xolkit has settings of its own.
-        std::fs::create_dir(&old).unwrap();
-        assert!(!super::move_dir(&old, &new).unwrap());
-        assert!(old.exists());
-    }
-
-    #[test]
-    fn own_themes_follow_the_rename() {
-        assert_eq!(
-            super::renamed_theme("skillshelf Dark").as_deref(),
-            Some("xolkit Dark")
-        );
-        assert_eq!(super::renamed_theme("Nord"), None);
     }
 
     #[cfg(windows)]
