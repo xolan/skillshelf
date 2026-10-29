@@ -1,5 +1,6 @@
 //! The main window: navigation, the page lists, and the detail pane.
 
+mod app_update;
 mod change;
 mod discover;
 mod installed;
@@ -31,9 +32,10 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use xolkit_core::{
     Action as Step, AvailablePlugin, Env, FetchedSkill, Plugin, Provider, Skill, SkillHit,
-    SkillUpdate, clean_staging, execute, scan_plugins, scan_skills,
+    SkillUpdate, clean_old_exe, clean_staging, execute, scan_plugins, scan_skills,
 };
 
+use self::app_update::AppUpdate;
 use crate::assets;
 use crate::profiles::Profiles;
 use crate::settings::{self, GitHubAccess};
@@ -169,6 +171,10 @@ pub struct Shelf {
     /// The result of the last GitHub access check, e.g. the hourly request limit.
     access_status: Option<Result<SharedString, SharedString>>,
     access_task: Option<Task<()>>,
+    /// This program's file, found on start: where an update goes, and what a restart runs.
+    exe: Option<PathBuf>,
+    app_update: AppUpdate,
+    app_update_task: Option<Task<()>>,
     /// The widths dragged to: the sidebar's, and the details' beside a list and beside a license.
     sidebar_split: Entity<ResizableState>,
     detail_split: Entity<ResizableState>,
@@ -196,6 +202,11 @@ impl Shelf {
                 cx.notify();
             }
         });
+        let exe = std::env::current_exe().ok();
+        if let Some(exe) = exe.clone() {
+            cx.background_spawn(async move { clean_old_exe(&exe) })
+                .detach();
+        }
         let mut shelf = Shelf {
             env: None,
             page: Page::Skills,
@@ -234,6 +245,9 @@ impl Shelf {
             has_token: settings::read_token().is_some(),
             access_status: None,
             access_task: None,
+            exe,
+            app_update: AppUpdate::Checking,
+            app_update_task: None,
             sidebar_split: cx.new(|_| ResizableState::default()),
             detail_split: cx.new(|_| ResizableState::default()),
             license_split: cx.new(|_| ResizableState::default()),
@@ -242,6 +256,7 @@ impl Shelf {
         };
         shelf.focus.focus(window, cx);
         shelf.reload(cx);
+        shelf.check_app_update(cx);
         shelf
     }
 
@@ -536,6 +551,7 @@ impl Shelf {
                         .when(working, |this| {
                             this.child(Spinner::new().small().color(cx.theme().muted_foreground))
                         })
+                        .children(self.app_update_button(cx))
                         .child(self.profile_menu(cx)),
                 ),
         )
@@ -562,6 +578,14 @@ impl Shelf {
             .border_r_0()
             .line_height(icon_line())
             .child(
+                SidebarGroup::new("Manage").child(SidebarMenu::new().child(item(
+                    Page::Profiles,
+                    "Profiles",
+                    Icon::new(Lucide::Layers),
+                    Some(self.profiles.list.len()),
+                ))),
+            )
+            .child(
                 SidebarGroup::new("Installed").child(SidebarMenu::new().children([
                     item(
                         Page::Skills,
@@ -582,14 +606,6 @@ impl Shelf {
                     item(Page::FindSkills, "Skills", IconName::Search.into(), None),
                     item(Page::FindPlugins, "Plugins", Icon::new(Lucide::Store), None),
                 ])),
-            )
-            .child(
-                SidebarGroup::new("Manage").child(SidebarMenu::new().child(item(
-                    Page::Profiles,
-                    "Profiles",
-                    Icon::new(Lucide::Layers),
-                    Some(self.profiles.list.len()),
-                ))),
             )
             .footer(
                 SidebarFooter::new()

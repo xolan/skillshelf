@@ -7,6 +7,7 @@ mod ops;
 mod plugins;
 mod profiles;
 mod skills;
+mod update;
 
 pub use discover::{
     FetchedSkill, SkillHit, SkillUpdate, check_skill_update, clean_staging, fetch_skill,
@@ -19,6 +20,9 @@ pub use ops::{
 pub use plugins::{AvailablePlugin, Plugin, PluginInstall, available_plugins, scan_plugins};
 pub use profiles::{Profile, States, skill_state};
 pub use skills::{Skill, SkillInstall, scan_skills};
+pub use update::{
+    Release, check_for_update, clean_old_exe, install_update, installed_by_package_manager,
+};
 
 #[cfg(test)]
 pub(crate) mod testing {

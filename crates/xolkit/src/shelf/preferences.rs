@@ -319,6 +319,7 @@ impl Shelf {
                                 "xolkit {}, released under the MIT License.",
                                 env!("CARGO_PKG_VERSION")
                             )))
+                            .child(self.render_app_update(cx))
                             .child(
                                 h_flex().child(
                                     Button::new("licenses")

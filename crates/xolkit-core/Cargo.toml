@@ -8,9 +8,11 @@ license.workspace = true
 anyhow = "1"
 flate2 = "1"
 humantime = "2"
+semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 serde_yaml_ng = "0.10"
+sha2 = "0.11"
 tar = "0.4"
 toml_edit = "0.25"
 ureq = { version = "3", features = ["json"] }

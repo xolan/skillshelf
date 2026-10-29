@@ -38,6 +38,7 @@ impl Shelf {
             (
                 "Go to",
                 vec![
+                    page("Profiles", Icon::new(Lucide::Layers), Page::Profiles),
                     page("Installed skills", IconName::BookOpen.into(), Page::Skills),
                     page(
                         "Installed plugins",
@@ -50,7 +51,6 @@ impl Shelf {
                         Icon::new(Lucide::Store),
                         Page::FindPlugins,
                     ),
-                    page("Profiles", Icon::new(Lucide::Layers), Page::Profiles),
                     page("Settings", IconName::Settings.into(), Page::Settings),
                     page("Licenses", IconName::FileText.into(), Page::Licenses),
                 ],

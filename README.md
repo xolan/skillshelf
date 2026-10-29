@@ -18,6 +18,9 @@ A desktop app for managing agent skills and plugins for Claude Code and Codex CL
 - Keep profiles: each one holds the agents it manages and which of their skills and plugins are
   on. Switch from the title bar to turn everything on and off as that profile has it. The Default
   profile can't be removed; the profile in use keeps whatever you change while it is active.
+- Updates itself from [GitHub releases](https://github.com/xolan/xolkit/releases): it checks for a
+  newer version when it starts, and installs it under Settings → About. The Arch package updates
+  through a new `PKGBUILD` instead.
 
 Runs on Linux and Windows. There is no macOS build.
 
@@ -34,7 +37,8 @@ Runs on Linux and Windows. There is no macOS build.
   access (60 requests an hour) or paste a token under Settings → GitHub access.
 
 xolkit talks to `skills.sh`, `api.github.com`, `codeload.github.com` and
-`raw.githubusercontent.com`.
+`raw.githubusercontent.com`, and downloads its own updates from `github.com` and
+`release-assets.githubusercontent.com`.
 
 ## Install
 
@@ -49,7 +53,7 @@ Download `xolkit-<version>-<arch>-unknown-linux-gnu.tar.gz` and its `.sha256` fr
 you picked and run:
 
 ```bash
-version=2.0.0
+version=2.1.0
 name=xolkit-$version-$(uname -m)-unknown-linux-gnu
 sha256sum -c "$name.tar.gz.sha256" &&
   tar -xzf "$name.tar.gz" &&
@@ -139,8 +143,8 @@ rm -rf "${XDG_CONFIG_HOME:-$HOME/.config}/xolkit"   # settings, profiles and sav
 rm -rf ~/.agents/.xolkit-staging
 ```
 
-On Windows, delete the folder you extracted, unpin it from Start, and delete
-`%APPDATA%\xolkit` and `%USERPROFILE%\.agents\.xolkit-staging`.
+On Windows, delete the folder you extracted (an update may leave `xolkit.exe.old` in it), unpin
+it from Start, and delete `%APPDATA%\xolkit` and `%USERPROFILE%\.agents\.xolkit-staging`.
 
 Skills and plugins you installed with xolkit stay installed, along with the agents' config
 files. Remove them in xolkit first if you don't want them.
