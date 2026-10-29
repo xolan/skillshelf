@@ -569,7 +569,10 @@ fn tree_hash(source: &str, rev: &str, folder: &str, token: Option<&str>) -> Resu
     Ok(tree.sha)
 }
 
-fn github(token: Option<&str>, url: &str) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
+pub(crate) fn github(
+    token: Option<&str>,
+    url: &str,
+) -> ureq::RequestBuilder<ureq::typestate::WithoutBody> {
     let request = ureq::get(url).header("User-Agent", USER_AGENT);
     // Only the API needs the token; never send it anywhere else.
     match token {
