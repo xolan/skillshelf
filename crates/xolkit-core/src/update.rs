@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{Context, Result, ensure};
 use serde::Deserialize;
@@ -12,6 +13,9 @@ use crate::discover::github;
 const REPO: &str = "xolan/xolkit";
 /// Largest release archive to download.
 const MAX_ARCHIVE: u64 = 200 * 1024 * 1024;
+/// How long a check, and a whole download, may take before it fails and can be tried again.
+const CHECK_TIMEOUT: Duration = Duration::from_secs(30);
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
 /// A release newer than the running build, with its download for this platform.
 #[derive(Clone, Debug, PartialEq)]
@@ -44,11 +48,10 @@ struct Asset {
 
 /// The latest release on GitHub, if it is newer than this build.
 pub fn check_for_update() -> Result<Option<Release>> {
-    let latest: Latest = github(
-        None,
+    let latest: Latest = get(
         &format!("https://api.github.com/repos/{REPO}/releases/latest"),
+        CHECK_TIMEOUT,
     )
-    .call()
     .context("could not reach GitHub")?
     .body_mut()
     .read_json()
@@ -104,13 +107,11 @@ pub fn install_update(release: &Release, exe: &Path) -> Result<()> {
         .download
         .as_ref()
         .context("the release has no download for this computer")?;
-    let checksum = github(None, checksum_url)
-        .call()
+    let checksum = get(checksum_url, CHECK_TIMEOUT)
         .context("could not download the checksum")?
         .body_mut()
         .read_to_string()?;
-    let archive = github(None, archive_url)
-        .call()
+    let archive = get(archive_url, DOWNLOAD_TIMEOUT)
         .context("could not download the release")?
         .body_mut()
         .with_config()
@@ -119,6 +120,15 @@ pub fn install_update(release: &Release, exe: &Path) -> Result<()> {
     verify(&archive, &checksum)?;
     let binary = extract_binary(&archive, &release.version)?;
     replace_exe(exe, &binary)
+}
+
+/// An anonymous GET that fails once `timeout` passes, reading the body included.
+fn get(url: &str, timeout: Duration) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
+    github(None, url)
+        .config()
+        .timeout_global(Some(timeout))
+        .build()
+        .call()
 }
 
 /// Checks `archive` against a `sha256sum` line.
@@ -228,9 +238,21 @@ fn put_in_place(exe: &Path, new: &Path, binary: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Removes the binary an earlier update moved aside on Windows.
+/// Removes the binary an earlier update moved aside on Windows. The restart starts this program
+/// before the old one quits, so it tries again for a few seconds. Blocks while it waits.
 pub fn clean_old_exe(exe: &Path) {
-    let _ = fs::remove_file(old_exe(exe));
+    if !cfg!(windows) {
+        return;
+    }
+    let old = old_exe(exe);
+    for _ in 0..20 {
+        match fs::remove_file(&old) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                std::thread::sleep(Duration::from_millis(500))
+            }
+            _ => return,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -90,8 +90,8 @@ impl Shelf {
         }
     }
 
-    fn restart_button(&self, cx: &mut Context<Self>) -> Button {
-        Button::new("restart")
+    fn restart_button(&self, id: &'static str, cx: &mut Context<Self>) -> Button {
+        Button::new(id)
             .small()
             .primary()
             .icon(IconName::RefreshCw)
@@ -115,7 +115,7 @@ impl Shelf {
                     })),
             ),
             AppUpdate::Installed(_) => Some(
-                self.restart_button(cx)
+                self.restart_button("app-restart", cx)
                     .ghost()
                     .label("Restart to update")
                     .tooltip("Start the new version of xolkit"),
@@ -207,7 +207,7 @@ impl Shelf {
                     format!("xolkit {version} is installed. Restart to use it."),
                 )
                 .text_color(success),
-                vec![self.restart_button(cx)],
+                vec![self.restart_button("restart", cx)],
             ),
         };
         v_flex()

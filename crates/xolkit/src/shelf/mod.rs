@@ -203,8 +203,9 @@ impl Shelf {
             }
         });
         let exe = std::env::current_exe().ok();
-        if let Some(exe) = &exe {
-            clean_old_exe(exe);
+        if let Some(exe) = exe.clone() {
+            cx.background_spawn(async move { clean_old_exe(&exe) })
+                .detach();
         }
         let mut shelf = Shelf {
             env: None,
